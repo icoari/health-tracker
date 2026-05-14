@@ -45,7 +45,7 @@
     }
   }
 
-  // Migrate boolean crise → number (0 or 3); ensure notes is a string
+  // Migrate boolean crise → number, ensure notes / criseTime are strings
   function migrate(state) {
     let changed = false;
     for (const date in state.entries) {
@@ -57,6 +57,10 @@
         }
         if (typeof e.notes !== 'string') {
           e.notes = '';
+          changed = true;
+        }
+        if (typeof e.criseTime !== 'string') {
+          e.criseTime = '';
           changed = true;
         }
       }
@@ -165,9 +169,10 @@
           note: initial.note,
           cachet: !!initial.cachet,
           crise: typeof initial.crise === 'number' ? initial.crise : (initial.crise ? 3 : 0),
+          criseTime: typeof initial.criseTime === 'string' ? initial.criseTime : '',
           notes: typeof initial.notes === 'string' ? initial.notes : '',
         }
-      : { note: null, cachet: false, crise: 0, notes: '' };
+      : { note: null, cachet: false, crise: 0, criseTime: '', notes: '' };
 
     const card = document.createElement('article');
     card.className = 'slot';
@@ -207,6 +212,10 @@
             <div class="note-dots note-dots--crise" data-dots="crise">
               ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="note-dot" data-value="${n}">${n}</button>`).join('')}
             </div>
+            <div class="time-row">
+              <span class="time-row__label">Heure</span>
+              <input type="time" class="time-input" data-crise-time>
+            </div>
           </div>
         </div>
         <div class="reveal-block">
@@ -232,11 +241,13 @@
     const criseReveal = card.querySelector('[data-reveal="crise"]');
     const notesReveal = card.querySelector('[data-reveal="notes"]');
     const notesInput = card.querySelector('[data-notes]');
+    const criseTimeInput = card.querySelector('[data-crise-time]');
     const deleteBtn = card.querySelector('[data-delete]');
     const noteEl = card.querySelector('[data-note]');
     const tagsEl = card.querySelector('[data-tags]');
 
     notesInput.value = draft.notes || '';
+    criseTimeInput.value = draft.criseTime || '';
 
     function refreshControls() {
       noteDots.forEach(d => {
@@ -280,12 +291,14 @@
         note: draft.note,
         cachet: draft.cachet,
         crise: draft.crise,
+        criseTime: draft.crise > 0 ? (draft.criseTime || '') : '',
         notes: (draft.notes || '').trim(),
       });
       hasEntry = true;
       card.classList.add('slot--has-entry');
       refreshSummary();
       renderHeatmap();
+      renderStats();
       flashSaved();
     }
 
@@ -318,7 +331,16 @@
         e.stopPropagation();
         haptic(8);
         const v = Number(d.dataset.value);
+        const wasOff = draft.crise === 0;
         draft.crise = (v === draft.crise) ? 0 : v;
+        if (draft.crise === 0) {
+          draft.criseTime = '';
+          criseTimeInput.value = '';
+        } else if (wasOff && !draft.criseTime) {
+          const now = new Date();
+          draft.criseTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          criseTimeInput.value = draft.criseTime;
+        }
         resetDeleteState();
         refreshControls();
         commit();
@@ -341,12 +363,27 @@
       haptic(8);
       if (draft.crise > 0) {
         draft.crise = 0;
+        draft.criseTime = '';
+        criseTimeInput.value = '';
       } else {
         draft.crise = 1;
+        if (!draft.criseTime) {
+          const now = new Date();
+          draft.criseTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          criseTimeInput.value = draft.criseTime;
+        }
       }
       resetDeleteState();
       refreshControls();
       commit();
+    });
+
+    // --- Crise time input ---
+    criseTimeInput.addEventListener('click', (e) => e.stopPropagation());
+    criseTimeInput.addEventListener('change', (e) => {
+      e.stopPropagation();
+      draft.criseTime = criseTimeInput.value;
+      if (draft.note !== null) commit();
     });
 
     // --- Notes toggle (expand/collapse only, never destructive) ---
@@ -385,8 +422,9 @@
       } else {
         resetDeleteState();
         deleteEntryStorage(key, slot);
-        draft = { note: null, cachet: false, crise: 0, notes: '' };
+        draft = { note: null, cachet: false, crise: 0, criseTime: '', notes: '' };
         notesInput.value = '';
+        criseTimeInput.value = '';
         notesOpen = false;
         hasEntry = false;
         card.classList.remove('slot--has-entry');
@@ -394,6 +432,7 @@
         refreshControls();
         refreshSummary();
         renderHeatmap();
+        renderStats();
         haptic(20);
       }
     });
@@ -448,40 +487,48 @@
       const d = addDays(parseKey(START_DATE), i);
       const key = dateKey(d);
       const dayEntry = state.entries[key] || {};
-      let maxCrise = 0;
-      SLOTS.forEach(s => {
-        const e = dayEntry[s];
-        if (e) {
-          const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
-          if (c > maxCrise) maxCrise = c;
-        }
-      });
       const isFuture = d > new Date() && key !== todayKey;
       const isToday = key === todayKey;
 
       const cell = document.createElement('div');
       cell.className = 'day';
-      if (maxCrise > 0) {
-        cell.classList.add('day--crise');
-        // stronger border for higher intensity
-        cell.style.borderColor = `rgba(226, 109, 92, ${(0.3 + maxCrise / 5 * 0.7).toFixed(2)})`;
-      }
       if (isToday) cell.classList.add('day--today');
       if (isFuture) cell.classList.add('day--future');
       cell.style.animationDelay = `${i * 14}ms`;
       cell.dataset.date = key;
-      cell.title = formatDateLong(d);
 
       const bands = document.createElement('div');
       bands.className = 'day__bands';
+
+      const tipLines = [formatDateLong(d)];
+
       SLOTS.forEach(s => {
         const band = document.createElement('div');
         band.className = 'day__band';
         const e = dayEntry[s];
-        band.style.background = bandColor(e?.note);
+        if (e) {
+          band.style.background = bandColor(e.note);
+          const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
+          if (c > 0) {
+            band.classList.add('day__band--crise');
+            band.dataset.criseLevel = c;
+          }
+          if (e.notes && e.notes.trim()) {
+            band.classList.add('day__band--comment');
+          }
+          let line = `${SLOT_LABELS[s]} · ${e.note}/5`;
+          if (e.cachet) line += ' · cachet';
+          if (c > 0) line += ` · crise ${c}/5${e.criseTime ? ' à ' + e.criseTime : ''}`;
+          if (e.notes && e.notes.trim()) line += ' · commentaire';
+          tipLines.push(line);
+        } else {
+          band.style.background = bandColor(0);
+        }
         bands.appendChild(band);
       });
+
       cell.appendChild(bands);
+      cell.title = tipLines.join('\n');
 
       const num = document.createElement('span');
       num.className = 'day__num';
@@ -494,6 +541,120 @@
 
       container.appendChild(cell);
     }
+  }
+
+  // ---------- Stats trend card ----------
+  function renderStats() {
+    const container = document.getElementById('statsCard');
+    if (!container) return;
+
+    const todayKey = dateKey(logicalToday());
+    // Build daily series up to today
+    const series = [];
+    for (let i = 0; i < TOTAL_DAYS; i++) {
+      const d = addDays(parseKey(START_DATE), i);
+      const k = dateKey(d);
+      const isFuture = d > new Date() && k !== todayKey;
+      if (isFuture) break;
+      const dayE = state.entries[k] || {};
+      let sum = 0, n = 0, cachet = 0, crise = 0, criseInt = 0;
+      SLOTS.forEach(s => {
+        const e = dayE[s];
+        if (!e) return;
+        sum += e.note; n++;
+        if (e.cachet) cachet++;
+        if (e.crise > 0) { crise++; criseInt += e.crise; }
+      });
+      series.push({ key: k, avg: n ? sum / n : null, count: n, cachet, crise, criseInt });
+    }
+
+    let totalNote = 0, totalNoteCount = 0;
+    let totalCachet = 0, totalCrise = 0, totalCriseIntensity = 0;
+    for (const day of series) {
+      totalNote += (day.avg ?? 0) * day.count;
+      totalNoteCount += day.count;
+      totalCachet += day.cachet;
+      totalCrise += day.crise;
+      totalCriseIntensity += day.criseInt;
+    }
+
+    if (totalNoteCount === 0) {
+      container.innerHTML = '<div class="stats-card__empty">Pas encore de données enregistrées. Saisis ton premier créneau pour voir la tendance apparaître ici.</div>';
+      return;
+    }
+
+    const avgNote = totalNote / totalNoteCount;
+
+    // Delta: avg of first 3 days with data vs last 3 days with data
+    const daysWithData = series.filter(d => d.avg !== null);
+    let deltaText = '—';
+    let deltaCls = '';
+    if (daysWithData.length >= 6) {
+      const earlyN = Math.max(3, Math.floor(daysWithData.length / 3));
+      const lateN = earlyN;
+      const early = daysWithData.slice(0, earlyN);
+      const late = daysWithData.slice(-lateN);
+      const earlyAvg = early.reduce((a, d) => a + d.avg, 0) / early.length;
+      const lateAvg = late.reduce((a, d) => a + d.avg, 0) / late.length;
+      const delta = lateAvg - earlyAvg;
+      const sign = delta > 0 ? '+' : (delta < 0 ? '' : '');
+      deltaText = `${delta > 0 ? '↗' : delta < 0 ? '↘' : '→'} ${sign}${delta.toFixed(1)}`;
+      if (delta < -0.2) deltaCls = 'stats-card__delta--neg';
+      else if (delta > 0.2) deltaCls = '';
+      else deltaCls = 'stats-card__delta--neutral';
+    }
+
+    // Streak (consecutive days at the end with all 3 slots filled)
+    let streak = 0;
+    for (let i = series.length - 1; i >= 0; i--) {
+      if (series[i].count === 3) streak++;
+      else break;
+    }
+
+    const cachetPct = totalNoteCount ? Math.round((totalCachet / totalNoteCount) * 100) : 0;
+
+    // Build sparkline path
+    const W = 100, H = 60, padY = 6;
+    const innerH = H - padY * 2;
+    const total = series.length;
+    let path = '';
+    let lastPoint = null;
+    let inSeg = false;
+    series.forEach((d, i) => {
+      if (d.avg === null) { inSeg = false; return; }
+      const x = total === 1 ? W / 2 : (i / (total - 1)) * W;
+      const y = padY + innerH - ((d.avg - 1) / 4) * innerH;
+      path += `${inSeg ? 'L' : 'M'} ${x.toFixed(2)} ${y.toFixed(2)} `;
+      inSeg = true;
+      lastPoint = { x, y };
+    });
+
+    const dotMarkup = lastPoint
+      ? `<circle cx="${lastPoint.x.toFixed(2)}" cy="${lastPoint.y.toFixed(2)}" r="1.8" fill="var(--accent)" />`
+      : '';
+
+    container.innerHTML = `
+      <div class="stats-card__top">
+        <div class="stats-card__main">
+          <span class="stats-card__value">${avgNote.toFixed(1)}<span class="stats-card__value-unit">/ 5</span></span>
+          <span class="stats-card__caption">note moyenne</span>
+        </div>
+        <span class="stats-card__delta ${deltaCls}">${deltaText}</span>
+      </div>
+      <svg class="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        ${[1, 2, 3, 4, 5].map(n => {
+          const y = padY + innerH - ((n - 1) / 4) * innerH;
+          return `<line x1="0" x2="${W}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="0.4" />`;
+        }).join('')}
+        ${path ? `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />` : ''}
+        ${dotMarkup}
+      </svg>
+      <div class="stats-card__secondary">
+        <span class="stats-card__sec-item">Série<strong>${streak} j</strong></span>
+        <span class="stats-card__sec-item">Cachets<strong>${cachetPct}%</strong></span>
+        <span class="stats-card__sec-item">Crises<strong>${totalCrise}${totalCrise > 0 ? ` · ${(totalCriseIntensity / totalCrise).toFixed(1)}/5` : ''}</strong></span>
+      </div>
+    `;
   }
 
   // ---------- Modal (edit any day) ----------
@@ -516,6 +677,7 @@
     document.getElementById('modalBackdrop').classList.remove('modal-backdrop--open');
     modalDateKey = null;
     renderHeatmap();
+    renderStats();
     if (wasModalDate === dateKey(logicalToday())) renderToday();
   }
 
@@ -539,4 +701,5 @@
   renderHeader();
   renderToday();
   renderHeatmap();
+  renderStats();
 })();

@@ -20,6 +20,7 @@
           if (typeof e.crise === 'boolean') e.crise = e.crise ? 3 : 0;
           else if (typeof e.crise !== 'number') e.crise = 0;
           if (typeof e.notes !== 'string') e.notes = '';
+          if (typeof e.criseTime !== 'string') e.criseTime = '';
         }
       }
       return p;
@@ -240,7 +241,7 @@
       if (e) {
         html += `<td class="note">${e.note}</td>`;
         html += `<td>${e.cachet ? 'Oui' : '—'}</td>`;
-        html += `<td class="${e.crise > 0 ? 'crise' : ''}">${e.crise > 0 ? `${e.crise}/5` : '—'}</td>`;
+        html += `<td class="${e.crise > 0 ? 'crise' : ''}">${e.crise > 0 ? `${e.crise}/5${e.criseTime ? `<br><span class="cell-sub">${e.criseTime}</span>` : ''}` : '—'}</td>`;
       } else {
         html += `<td class="empty">—</td><td class="empty">—</td><td class="empty">—</td>`;
       }
@@ -256,7 +257,14 @@
     for (const s of SLOTS) {
       const e = day.entries[s];
       if (e && e.notes && e.notes.trim()) {
-        commentEntries.push({ date: day.date, key: day.key, slot: s, text: e.notes.trim() });
+        commentEntries.push({
+          date: day.date,
+          key: day.key,
+          slot: s,
+          text: e.notes.trim(),
+          crise: e.crise || 0,
+          criseTime: e.criseTime || '',
+        });
       }
     }
   }
@@ -266,8 +274,12 @@
     for (const c of commentEntries) {
       const div = document.createElement('div');
       div.className = 'comment';
+      let meta = `${fmtDate(c.date, { weekday: 'long', day: 'numeric', month: 'long' })} · ${SLOT_LABELS[c.slot]}`;
+      if (c.crise > 0) {
+        meta += ` · crise ${c.crise}/5${c.criseTime ? ` à ${c.criseTime}` : ''}`;
+      }
       div.innerHTML = `
-        <div class="comment__meta">${fmtDate(c.date, { weekday: 'long', day: 'numeric', month: 'long' })} · ${SLOT_LABELS[c.slot]}</div>
+        <div class="comment__meta">${meta}</div>
         <div class="comment__text"></div>
       `;
       div.querySelector('.comment__text').textContent = c.text;
@@ -278,12 +290,12 @@
   // ---------- Buttons ----------
   document.getElementById('printBtn').addEventListener('click', () => window.print());
   document.getElementById('csvBtn').addEventListener('click', () => {
-    const rows = [['date', 'creneau', 'note', 'cachet', 'crise', 'commentaire', 'saved_at']];
+    const rows = [['date', 'creneau', 'note', 'cachet', 'crise', 'crise_heure', 'commentaire', 'saved_at']];
     for (const day of days) {
       for (const s of SLOTS) {
         const e = day.entries[s];
         if (!e) continue;
-        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, (e.notes || '').replace(/\r?\n/g, ' '), e.savedAt || '']);
+        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, e.criseTime || '', (e.notes || '').replace(/\r?\n/g, ' '), e.savedAt || '']);
       }
     }
     const csv = rows.map(r => r.map(v => {
