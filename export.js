@@ -13,6 +13,14 @@
       if (!raw) return { entries: {} };
       const p = JSON.parse(raw);
       if (!p.entries) p.entries = {};
+      // Normalize crise field to number
+      for (const date in p.entries) {
+        for (const slot in p.entries[date]) {
+          const e = p.entries[date][slot];
+          if (typeof e.crise === 'boolean') e.crise = e.crise ? 3 : 0;
+          else if (typeof e.crise !== 'number') e.crise = 0;
+        }
+      }
       return p;
     } catch {
       return { entries: {} };
@@ -66,6 +74,8 @@
   let totalNote = 0, totalNoteCount = 0;
   let totalCachet = 0;
   let totalCrise = 0;
+  let totalCriseIntensity = 0;
+  let maxCrise = 0;
 
   for (const day of days) {
     for (const s of SLOTS) {
@@ -74,12 +84,17 @@
       totalNote += e.note;
       totalNoteCount++;
       if (e.cachet) totalCachet++;
-      if (e.crise) totalCrise++;
+      if (e.crise > 0) {
+        totalCrise++;
+        totalCriseIntensity += e.crise;
+        if (e.crise > maxCrise) maxCrise = e.crise;
+      }
     }
   }
 
   const avgNote = totalNoteCount ? (totalNote / totalNoteCount) : null;
   const cachetPct = totalNoteCount ? Math.round((totalCachet / totalNoteCount) * 100) : 0;
+  const avgCriseIntensity = totalCrise ? (totalCriseIntensity / totalCrise) : null;
 
   // Week 1 vs week 4 deltas
   function weekAvg(startIdx, endIdx) {
@@ -116,26 +131,35 @@
 
   summaryGrid.appendChild(statCard('Note moyenne', avgNote !== null ? avgNote.toFixed(2) : '—', avgNote !== null ? 'sur 5' : ''));
   summaryGrid.appendChild(statCard('Prise de cachet', `${cachetPct}%`, `${totalCachet} / ${totalNoteCount || 0} saisies`));
-  summaryGrid.appendChild(statCard('Crises', String(totalCrise), totalCrise > 1 ? 'épisodes' : 'épisode'));
+  summaryGrid.appendChild(statCard(
+    'Crises',
+    String(totalCrise),
+    totalCrise > 0
+      ? `force moy. ${avgCriseIntensity.toFixed(1)}/5 · max ${maxCrise}/5`
+      : 'aucun épisode'
+  ));
   summaryGrid.appendChild(statCard('Évolution', deltaStr, 'sem. 1 → sem. 4'));
 
   // ---------- Stats table by slot ----------
   const statsBody = document.getElementById('statsBody');
   for (const s of SLOTS) {
-    let n = 0, total = 0, ca = 0, cr = 0;
+    let n = 0, total = 0, ca = 0, cr = 0, crIntensity = 0;
     for (const day of days) {
       const e = day.entries[s];
       if (!e) continue;
       total += e.note; n++;
       if (e.cachet) ca++;
-      if (e.crise) cr++;
+      if (e.crise > 0) { cr++; crIntensity += e.crise; }
     }
+    const criseCell = cr > 0
+      ? `${cr} · force moy. ${(crIntensity / cr).toFixed(1)}`
+      : '0';
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${SLOT_LABELS[s]}</td>
       <td class="num">${n ? (total / n).toFixed(2) : '—'}</td>
       <td class="num">${n ? Math.round((ca / n) * 100) + '%' : '—'}</td>
-      <td class="num">${cr}</td>
+      <td class="num">${criseCell}</td>
       <td class="num">${n} / ${TOTAL_DAYS}</td>
     `;
     statsBody.appendChild(row);
@@ -215,7 +239,7 @@
       if (e) {
         html += `<td class="note">${e.note}</td>`;
         html += `<td>${e.cachet ? 'Oui' : '—'}</td>`;
-        html += `<td class="${e.crise ? 'crise' : ''}">${e.crise ? 'Oui' : '—'}</td>`;
+        html += `<td class="${e.crise > 0 ? 'crise' : ''}">${e.crise > 0 ? `${e.crise}/5` : '—'}</td>`;
       } else {
         html += `<td class="empty">—</td><td class="empty">—</td><td class="empty">—</td>`;
       }
@@ -232,7 +256,7 @@
       for (const s of SLOTS) {
         const e = day.entries[s];
         if (!e) continue;
-        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise ? 1 : 0, e.savedAt || '']);
+        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, e.savedAt || '']);
       }
     }
     const csv = rows.map(r => r.map(v => {
