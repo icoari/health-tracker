@@ -152,6 +152,29 @@
     table.days .crise { color: var(--danger); font-weight: 600; }
     table.days .note { font-weight: 600; }
 
+    .comment {
+      padding: 10px 14px;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      page-break-inside: avoid;
+    }
+    .comment__meta {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      margin-bottom: 4px;
+    }
+    .comment__text { white-space: pre-wrap; color: var(--ink); }
+    .comments-empty {
+      font-size: 12px;
+      color: var(--ink-faint);
+      padding: 8px 0;
+    }
+
     .chart {
       width: 100%;
       height: 180px;
@@ -226,6 +249,9 @@
       </thead>
       <tbody id="daysBody"></tbody>
     </table>
+
+    <h2 id="commentsTitle">Commentaires</h2>
+    <div id="commentsBlock"></div>
   </div>
 
   <script src="export.js"></script>

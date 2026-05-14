@@ -14,6 +14,8 @@
     midi:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 3v1M12 20v1M3 12h1M20 12h1M5.6 5.6l.7.7M17.7 17.7l.7.7M5.6 18.4l.7-.7M17.7 6.3l.7-.7"/></svg>',
     soir:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
     pill:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 20.5a7.07 7.07 0 0 1-10-10l10-10a7.07 7.07 0 0 1 10 10z"/><path d="m8.5 8.5 7 7"/></svg>',
+    crise: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="7" x2="19" y2="7"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="17" x2="14" y2="17"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>',
   };
 
@@ -43,7 +45,7 @@
     }
   }
 
-  // Migrate boolean crise → number (0 or 3)
+  // Migrate boolean crise → number (0 or 3); ensure notes is a string
   function migrate(state) {
     let changed = false;
     for (const date in state.entries) {
@@ -51,6 +53,10 @@
         const e = state.entries[date][slot];
         if (typeof e.crise === 'boolean') {
           e.crise = e.crise ? 3 : 0;
+          changed = true;
+        }
+        if (typeof e.notes !== 'string') {
+          e.notes = '';
           changed = true;
         }
       }
@@ -155,8 +161,13 @@
     const startsCompact = hasEntry || !(isCurrent || expandIfEmpty);
 
     let draft = initial
-      ? { note: initial.note, cachet: !!initial.cachet, crise: typeof initial.crise === 'number' ? initial.crise : (initial.crise ? 3 : 0) }
-      : { note: null, cachet: false, crise: 0 };
+      ? {
+          note: initial.note,
+          cachet: !!initial.cachet,
+          crise: typeof initial.crise === 'number' ? initial.crise : (initial.crise ? 3 : 0),
+          notes: typeof initial.notes === 'string' ? initial.notes : '',
+        }
+      : { note: null, cachet: false, crise: 0, notes: '' };
 
     const card = document.createElement('article');
     card.className = 'slot';
@@ -183,42 +194,63 @@
             ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="note-dot" data-value="${n}">${n}</button>`).join('')}
           </div>
         </div>
-        <div class="note-row">
-          <span class="note-row__label">Crise</span>
-          <div class="note-dots note-dots--crise" data-dots="crise">
-            ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="note-dot" data-value="${n}">${n}</button>`).join('')}
-          </div>
-        </div>
         <button type="button" class="toggle toggle--cachet" data-toggle="cachet">
           <span class="toggle__label">${ICONS.pill}<span>Cachet pris</span></span>
           <span class="toggle__switch"></span>
         </button>
-        <button type="button" class="slot__delete" data-delete>
-          ${ICONS.trash}<span data-delete-label>Supprimer</span>
-        </button>
+        <div class="reveal-block">
+          <button type="button" class="toggle toggle--crise" data-toggle="crise">
+            <span class="toggle__label">${ICONS.crise}<span>Crise</span></span>
+            <span class="toggle__switch"></span>
+          </button>
+          <div class="reveal-block__content" data-reveal="crise">
+            <div class="note-dots note-dots--crise" data-dots="crise">
+              ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="note-dot" data-value="${n}">${n}</button>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="reveal-block">
+          <button type="button" class="toggle toggle--notes" data-toggle="notes">
+            <span class="toggle__label">${ICONS.notes}<span>Commentaire</span></span>
+            <span class="toggle__switch"></span>
+          </button>
+          <div class="reveal-block__content" data-reveal="notes">
+            <textarea class="notes-input" rows="3" placeholder="Repas, ressenti, déclencheur…" data-notes></textarea>
+          </div>
+        </div>
       </div>
+      <button type="button" class="slot__delete" data-delete title="Supprimer cette entrée" aria-label="Supprimer">
+        ${ICONS.trash}
+      </button>
     `;
 
     const noteDots = card.querySelectorAll('[data-dots="note"] .note-dot');
     const criseDots = card.querySelectorAll('[data-dots="crise"] .note-dot');
     const cachetBtn = card.querySelector('[data-toggle="cachet"]');
+    const criseBtn = card.querySelector('[data-toggle="crise"]');
+    const notesBtn = card.querySelector('[data-toggle="notes"]');
+    const criseReveal = card.querySelector('[data-reveal="crise"]');
+    const notesReveal = card.querySelector('[data-reveal="notes"]');
+    const notesInput = card.querySelector('[data-notes]');
     const deleteBtn = card.querySelector('[data-delete]');
-    const deleteLabel = card.querySelector('[data-delete-label]');
     const noteEl = card.querySelector('[data-note]');
     const tagsEl = card.querySelector('[data-tags]');
-    const hoursEl = card.querySelector('[data-hours]');
+
+    notesInput.value = draft.notes || '';
 
     function refreshControls() {
-      // Note: single-dot selector
       noteDots.forEach(d => {
         d.classList.toggle('note-dot--active', Number(d.dataset.value) === draft.note);
       });
-      // Crise: cumulative fill (intensity)
       criseDots.forEach(d => {
         const v = Number(d.dataset.value);
         d.classList.toggle('note-dot--active', draft.crise > 0 && v <= draft.crise);
       });
       cachetBtn.classList.toggle('toggle--on', draft.cachet);
+      criseBtn.classList.toggle('toggle--on', draft.crise > 0);
+      criseReveal.classList.toggle('reveal-block__content--open', draft.crise > 0);
+      notesBtn.classList.toggle('toggle--on', notesOpen);
+      notesReveal.classList.toggle('reveal-block__content--open', notesOpen);
     }
 
     function refreshSummary() {
@@ -229,6 +261,7 @@
         if (e.cachet) tags.push('<span class="slot__tag">Cachet</span>');
         const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
         if (c > 0) tags.push(`<span class="slot__tag slot__tag--crise">Crise ${c}/5</span>`);
+        if (e.notes && e.notes.trim()) tags.push('<span class="slot__tag slot__tag--notes">Note</span>');
         tagsEl.innerHTML = tags.join('');
       } else {
         noteEl.textContent = '';
@@ -243,7 +276,12 @@
 
     function commit() {
       if (draft.note === null) return;
-      setEntry(key, slot, { note: draft.note, cachet: draft.cachet, crise: draft.crise });
+      setEntry(key, slot, {
+        note: draft.note,
+        cachet: draft.cachet,
+        crise: draft.crise,
+        notes: (draft.notes || '').trim(),
+      });
       hasEntry = true;
       card.classList.add('slot--has-entry');
       refreshSummary();
@@ -255,11 +293,12 @@
       deleteArmed = false;
       clearTimeout(deleteTimeout);
       deleteBtn.classList.remove('slot__delete--armed');
-      deleteLabel.textContent = 'Supprimer';
     }
 
     let deleteArmed = false;
     let deleteTimeout = null;
+    let notesOpen = !!(draft.notes && draft.notes.trim());
+    let notesDebounce = null;
 
     // --- Note dots ---
     noteDots.forEach(d => {
@@ -296,6 +335,45 @@
       commit();
     });
 
+    // --- Crise toggle ---
+    criseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      haptic(8);
+      if (draft.crise > 0) {
+        draft.crise = 0;
+      } else {
+        draft.crise = 1;
+      }
+      resetDeleteState();
+      refreshControls();
+      commit();
+    });
+
+    // --- Notes toggle (expand/collapse only, never destructive) ---
+    notesBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      haptic(8);
+      notesOpen = !notesOpen;
+      resetDeleteState();
+      refreshControls();
+      if (notesOpen) setTimeout(() => notesInput.focus(), 240);
+    });
+
+    // --- Notes textarea ---
+    notesInput.addEventListener('click', (e) => e.stopPropagation());
+    notesInput.addEventListener('input', (e) => {
+      e.stopPropagation();
+      draft.notes = notesInput.value;
+      clearTimeout(notesDebounce);
+      notesDebounce = setTimeout(() => {
+        if (draft.note !== null) commit();
+      }, 700);
+    });
+    notesInput.addEventListener('blur', () => {
+      clearTimeout(notesDebounce);
+      if (draft.note !== null) commit();
+    });
+
     // --- Delete with 2-tap confirm ---
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -303,12 +381,13 @@
       if (!deleteArmed) {
         deleteArmed = true;
         deleteBtn.classList.add('slot__delete--armed');
-        deleteLabel.textContent = 'Confirmer la suppression';
         deleteTimeout = setTimeout(resetDeleteState, 3000);
       } else {
         resetDeleteState();
         deleteEntryStorage(key, slot);
-        draft = { note: null, cachet: false, crise: 0 };
+        draft = { note: null, cachet: false, crise: 0, notes: '' };
+        notesInput.value = '';
+        notesOpen = false;
         hasEntry = false;
         card.classList.remove('slot--has-entry');
         card.classList.remove('slot--compact');

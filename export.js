@@ -13,12 +13,13 @@
       if (!raw) return { entries: {} };
       const p = JSON.parse(raw);
       if (!p.entries) p.entries = {};
-      // Normalize crise field to number
+      // Normalize crise to number, notes to string
       for (const date in p.entries) {
         for (const slot in p.entries[date]) {
           const e = p.entries[date][slot];
           if (typeof e.crise === 'boolean') e.crise = e.crise ? 3 : 0;
           else if (typeof e.crise !== 'number') e.crise = 0;
+          if (typeof e.notes !== 'string') e.notes = '';
         }
       }
       return p;
@@ -248,15 +249,41 @@
     daysBody.appendChild(tr);
   }
 
+  // ---------- Commentaires ----------
+  const commentsBlock = document.getElementById('commentsBlock');
+  const commentEntries = [];
+  for (const day of days) {
+    for (const s of SLOTS) {
+      const e = day.entries[s];
+      if (e && e.notes && e.notes.trim()) {
+        commentEntries.push({ date: day.date, key: day.key, slot: s, text: e.notes.trim() });
+      }
+    }
+  }
+  if (commentEntries.length === 0) {
+    commentsBlock.innerHTML = '<div class="comments-empty">Aucun commentaire saisi sur la période.</div>';
+  } else {
+    for (const c of commentEntries) {
+      const div = document.createElement('div');
+      div.className = 'comment';
+      div.innerHTML = `
+        <div class="comment__meta">${fmtDate(c.date, { weekday: 'long', day: 'numeric', month: 'long' })} · ${SLOT_LABELS[c.slot]}</div>
+        <div class="comment__text"></div>
+      `;
+      div.querySelector('.comment__text').textContent = c.text;
+      commentsBlock.appendChild(div);
+    }
+  }
+
   // ---------- Buttons ----------
   document.getElementById('printBtn').addEventListener('click', () => window.print());
   document.getElementById('csvBtn').addEventListener('click', () => {
-    const rows = [['date', 'creneau', 'note', 'cachet', 'crise', 'saved_at']];
+    const rows = [['date', 'creneau', 'note', 'cachet', 'crise', 'commentaire', 'saved_at']];
     for (const day of days) {
       for (const s of SLOTS) {
         const e = day.entries[s];
         if (!e) continue;
-        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, e.savedAt || '']);
+        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, (e.notes || '').replace(/\r?\n/g, ' '), e.savedAt || '']);
       }
     }
     const csv = rows.map(r => r.map(v => {
