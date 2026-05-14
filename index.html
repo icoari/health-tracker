@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0A0F">
+  <title>Suivi santé</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <h1 class="header__date" id="dateLabel">—</h1>
+      <p class="header__progress" id="progressLabel">—</p>
+    </header>
+
+    <section class="today">
+      <h2 class="section-title">Aujourd'hui</h2>
+      <div class="slots" id="slotsToday"></div>
+    </section>
+
+    <section class="month">
+      <h2 class="section-title">Le mois</h2>
+      <div class="heatmap" id="heatmap"></div>
+    </section>
+
+    <footer class="footer">
+      <a class="footer__link" href="export.html">Exporter le suivi</a>
+    </footer>
+  </main>
+
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal__header">
+        <h3 class="modal__title" id="modalTitle">—</h3>
+        <button class="modal__close" id="modalClose" type="button">Fermer</button>
+      </div>
+      <div class="slots" id="slotsModal"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suivi santé — Export</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #14141A;
+      --ink-dim: #555560;
+      --ink-faint: #9A9AA5;
+      --rule: #E4E4EA;
+      --rule-strong: #C8C8D2;
+      --accent: #2E8A72;
+      --danger: #B14C3E;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #F4F4F7; color: var(--ink); font-family: 'Inter', -apple-system, sans-serif; font-feature-settings: "tnum" 1; -webkit-font-smoothing: antialiased; }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      background: #FFF;
+      border-bottom: 1px solid var(--rule);
+      padding: 14px 24px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      z-index: 10;
+    }
+    .toolbar__title { font-size: 14px; font-weight: 600; color: var(--ink-dim); margin-right: auto; }
+    .toolbar button, .toolbar a {
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 9px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--rule-strong);
+      background: #FFF;
+      color: var(--ink);
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 120ms ease;
+    }
+    .toolbar button:hover, .toolbar a:hover { background: #F4F4F7; }
+    .toolbar button.primary {
+      background: var(--accent);
+      color: #FFF;
+      border-color: var(--accent);
+    }
+    .toolbar button.primary:hover { background: #267060; }
+
+    .sheet {
+      max-width: 760px;
+      margin: 24px auto;
+      background: #FFF;
+      padding: 48px 56px;
+      border-radius: 4px;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.06);
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 4px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--ink-dim);
+      margin: 0 0 32px;
+      font-weight: 400;
+    }
+
+    h2 {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      margin: 36px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 8px;
+    }
+    .stat {
+      padding: 14px 16px;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+    }
+    .stat__label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      margin-bottom: 8px;
+    }
+    .stat__value {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .stat__sub {
+      font-size: 11px;
+      color: var(--ink-dim);
+      margin-top: 2px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    table.stats td, table.stats th {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--rule);
+    }
+    table.stats th { font-weight: 600; color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+    table.stats td.num, table.stats th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    table.days {
+      font-size: 11px;
+    }
+    table.days th, table.days td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--rule);
+      text-align: center;
+    }
+    table.days th {
+      font-weight: 600;
+      color: var(--ink-dim);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: #FAFAFC;
+    }
+    table.days th:first-child, table.days td:first-child { text-align: left; }
+    table.days td.date { font-weight: 500; }
+    table.days td.empty { color: var(--ink-faint); }
+    table.days .crise { color: var(--danger); font-weight: 600; }
+    table.days .note { font-weight: 600; }
+
+    .chart {
+      width: 100%;
+      height: 180px;
+      margin: 8px 0 4px;
+    }
+    .chart-axis { font-size: 10px; fill: var(--ink-faint); font-family: 'Inter', sans-serif; font-feature-settings: "tnum" 1; }
+
+    @media print {
+      body { background: #FFF; }
+      .toolbar { display: none; }
+      .sheet {
+        box-shadow: none;
+        margin: 0;
+        max-width: none;
+        padding: 0 0 0 0;
+        border-radius: 0;
+      }
+      @page { size: A4; margin: 18mm 16mm; }
+      h2 { page-break-after: avoid; }
+      table { page-break-inside: auto; }
+      tr { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="toolbar__title">Export du suivi</span>
+    <a href="index.html">← Retour</a>
+    <button type="button" id="csvBtn">Télécharger CSV</button>
+    <button type="button" class="primary" id="printBtn">Imprimer / PDF</button>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <h1>Suivi quotidien — santé</h1>
+    <p class="subtitle" id="subtitle">—</p>
+
+    <h2>Synthèse</h2>
+    <div class="summary-grid" id="summaryGrid"></div>
+
+    <h2>Détail par créneau</h2>
+    <table class="stats">
+      <thead>
+        <tr>
+          <th>Créneau</th>
+          <th class="num">Note moy.</th>
+          <th class="num">% cachet</th>
+          <th class="num">Crises</th>
+          <th class="num">Saisies</th>
+        </tr>
+      </thead>
+      <tbody id="statsBody"></tbody>
+    </table>
+
+    <h2>Évolution de la note moyenne</h2>
+    <svg class="chart" id="chart" viewBox="0 0 760 180" preserveAspectRatio="none"></svg>
+
+    <h2>Détail jour par jour</h2>
+    <table class="days">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Matin</th>
+          <th>Cachet</th>
+          <th>Crise</th>
+          <th>Midi</th>
+          <th>Cachet</th>
+          <th>Crise</th>
+          <th>Soir</th>
+          <th>Cachet</th>
+          <th>Crise</th>
+        </tr>
+      </thead>
+      <tbody id="daysBody"></tbody>
+    </table>
+  </div>
+
+  <script src="export.js"></script>
+</body>
+</html>
