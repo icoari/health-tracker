@@ -648,6 +648,33 @@
       ? `<circle cx="${lastPoint.x.toFixed(2)}" cy="${lastPoint.y.toFixed(2)}" r="1.8" fill="var(--accent)" />`
       : '';
 
+    // ---- Second sparkline: every individual slot note in chronological order
+    const slotNotes = [];
+    for (const day of series) {
+      const dayE = state.entries[day.key] || {};
+      SLOTS.forEach(s => {
+        const e = dayE[s];
+        if (e && typeof e.note === 'number') slotNotes.push(e.note);
+      });
+    }
+    let rawPath = '';
+    let rawLastPoint = null;
+    if (slotNotes.length > 0) {
+      slotNotes.forEach((v, i) => {
+        const x = slotNotes.length === 1 ? W / 2 : (i / (slotNotes.length - 1)) * W;
+        const y = padY + innerH - ((v - 1) / 4) * innerH;
+        rawPath += `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)} `;
+        rawLastPoint = { x, y };
+      });
+    }
+    const rawDot = rawLastPoint
+      ? `<circle cx="${rawLastPoint.x.toFixed(2)}" cy="${rawLastPoint.y.toFixed(2)}" r="1.8" fill="var(--accent)" />`
+      : '';
+    const gridLines = [1, 2, 3, 4, 5].map(n => {
+      const y = padY + innerH - ((n - 1) / 4) * innerH;
+      return `<line x1="0" x2="${W}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" stroke="var(--border)" stroke-width="0.4" />`;
+    }).join('');
+
     container.innerHTML = `
       <div class="stats-card__top">
         <div class="stats-card__main">
@@ -657,13 +684,19 @@
         <span class="stats-card__delta ${deltaCls}">${deltaText}</span>
       </div>
       <svg class="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-        ${[1, 2, 3, 4, 5].map(n => {
-          const y = padY + innerH - ((n - 1) / 4) * innerH;
-          return `<line x1="0" x2="${W}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" stroke="var(--border)" stroke-width="0.4" />`;
-        }).join('')}
+        ${gridLines}
         ${path ? `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />` : ''}
         ${dotMarkup}
       </svg>
+      <div class="stats-card__sparkline-label">Moyenne par jour</div>
+      ${slotNotes.length > 0 ? `
+        <svg class="sparkline sparkline--secondary" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+          ${gridLines}
+          <path d="${rawPath}" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity="0.85" />
+          ${rawDot}
+        </svg>
+        <div class="stats-card__sparkline-label">Toutes les notes (${slotNotes.length} saisies)</div>
+      ` : ''}
       <div class="stats-card__secondary">
         <span class="stats-card__sec-item">Série<strong>${streak} j</strong></span>
         <span class="stats-card__sec-item">Cachets<strong>${cachetPct}%</strong></span>
