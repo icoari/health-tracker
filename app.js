@@ -1,6 +1,17 @@
 (() => {
   'use strict';
 
+  // ---------- Theme (synced with Bob via ?theme= URL param) ----------
+  (function applyTheme() {
+    const params = new URLSearchParams(location.search);
+    let t = params.get('theme'); // 'light' | 'dark' | 'auto' | null
+    if (t === 'auto' || !t) {
+      t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    if (t === 'light') document.body.classList.add('theme-light');
+    else document.body.classList.remove('theme-light');
+  })();
+
   // ---------- Config ----------
   const STORAGE_KEY = 'health-tracker-v1';
   const START_DATE = '2026-05-14';

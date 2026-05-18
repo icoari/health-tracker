@@ -12,10 +12,47 @@
   --accent-glow: rgba(127, 209, 185, 0.32);
   --danger: #E26D5C;
   --danger-soft: rgba(226, 109, 92, 0.16);
+  --modal-bg: #16161E;
   --radius-lg: 20px;
   --radius: 14px;
   --radius-sm: 8px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Light theme overrides — synced with Bob's palette */
+body.theme-light {
+  color-scheme: light;
+  --bg: #F4F2EE;
+  --surface: rgba(20, 20, 30, 0.045);
+  --surface-hover: rgba(20, 20, 30, 0.07);
+  --border: rgba(20, 20, 30, 0.09);
+  --border-strong: rgba(20, 20, 30, 0.16);
+  --text: rgba(15, 15, 25, 0.95);
+  --text-dim: rgba(15, 15, 25, 0.62);
+  --text-faint: rgba(15, 15, 25, 0.40);
+  --accent: #2E8A72;
+  --accent-soft: rgba(46, 138, 114, 0.13);
+  --accent-glow: rgba(46, 138, 114, 0.30);
+  --danger: #B14C3E;
+  --danger-soft: rgba(177, 76, 62, 0.10);
+  --modal-bg: #FFFFFF;
+}
+
+body.theme-light {
+  background-image:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(127, 209, 185, 0.18), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(146, 132, 220, 0.08), transparent 70%) !important;
+}
+
+body.theme-light .slot {
+  box-shadow: 0 2px 14px rgba(20, 20, 30, 0.04);
+}
+
+body.theme-light .note-dot,
+body.theme-light .toggle,
+body.theme-light .notes-input,
+body.theme-light .time-input {
+  background: rgba(20, 20, 30, 0.035);
 }
 
 * {
@@ -763,7 +800,7 @@ body {
 }
 
 .modal {
-  background: #16161E;
+  background: var(--modal-bg);
   border-top: 1px solid var(--border);
   border-radius: 24px 24px 0 0;
   padding: 24px 18px;
