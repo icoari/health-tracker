@@ -482,11 +482,16 @@
     });
   }
 
+  // Color scale: 1 = red (bad), 5 = green (good)
   function bandColor(note) {
-    if (!note) return 'rgba(255,255,255,0.04)';
-    const intensity = note / 5;
-    const alpha = 0.18 + intensity * 0.6;
-    return `rgba(127, 209, 185, ${alpha.toFixed(2)})`;
+    if (!note) return '';
+    const isLight = document.body.classList.contains('theme-light');
+    const hues = { 1: 6, 2: 28, 3: 50, 4: 95, 5: 138 };
+    const hue = hues[note] ?? 50;
+    const s = isLight ? 70 : 58;
+    const l = isLight ? 56 : 46;
+    const a = isLight ? 0.62 : 0.58;
+    return `hsla(${hue}, ${s}%, ${l}%, ${a})`;
   }
 
   function renderHeatmap() {
@@ -518,7 +523,8 @@
         band.className = 'day__band';
         const e = dayEntry[s];
         if (e) {
-          band.style.background = bandColor(e.note);
+          const bg = bandColor(e.note);
+          if (bg) band.style.background = bg;
           const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
           if (c > 0) {
             band.classList.add('day__band--crise');
@@ -532,8 +538,6 @@
           if (c > 0) line += ` · crise ${c}/5${e.criseTime ? ' à ' + e.criseTime : ''}`;
           if (e.notes && e.notes.trim()) line += ' · commentaire';
           tipLines.push(line);
-        } else {
-          band.style.background = bandColor(0);
         }
         bands.appendChild(band);
       });
@@ -655,7 +659,7 @@
       <svg class="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         ${[1, 2, 3, 4, 5].map(n => {
           const y = padY + innerH - ((n - 1) / 4) * innerH;
-          return `<line x1="0" x2="${W}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="0.4" />`;
+          return `<line x1="0" x2="${W}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" stroke="var(--border)" stroke-width="0.4" />`;
         }).join('')}
         ${path ? `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />` : ''}
         ${dotMarkup}
