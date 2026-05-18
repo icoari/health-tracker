@@ -729,7 +729,9 @@ body.theme-light .time-input {
 
 .sparkline--secondary {
   height: 42px;
-  margin-top: 10px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .stats-card__sparkline-label {
@@ -738,6 +740,7 @@ body.theme-light .time-input {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-faint);
+  margin-top: 4px;
   margin-bottom: 4px;
 }
 
