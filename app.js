@@ -141,6 +141,22 @@
     if (!state.entries[key]) state.entries[key] = {};
     state.entries[key][slot] = { ...data, savedAt: new Date().toISOString() };
     saveState(state);
+    pingWorker(key, slot);
+  }
+
+  // Tell the Bob Worker that a slot was filled so the evening cron reminder
+  // skips today. Best-effort, silent failure on offline / no sync.
+  function pingWorker(date, slot) {
+    try {
+      const raw = localStorage.getItem('bob-sync-v1');
+      const sync = raw ? JSON.parse(raw) : null;
+      if (!sync?.authToken) return;
+      fetch('https://bob.jz7w76ry59.workers.dev/health/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sync.authToken },
+        body: JSON.stringify({ date, slot }),
+      }).catch(() => {});
+    } catch {}
   }
 
   function deleteEntryStorage(key, slot) {
