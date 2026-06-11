@@ -1,4 +1,4 @@
-const CACHE = 'health-tracker-v11';
+const CACHE = 'health-tracker-v12';
 const ASSETS = [
   './',
   './index.html',
@@ -24,8 +24,12 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
+  // Bob embeds this app as ../health-tracker/?theme=…&_v=<ts> — match the
+  // cached shell regardless of the query or offline loads fail and every
+  // _v value piles a new copy into the cache.
+  const matchOpts = req.mode === 'navigate' ? { ignoreSearch: true } : undefined;
   e.respondWith(
-    caches.match(req).then(cached => {
+    caches.match(req, matchOpts).then(cached => {
       const fetchPromise = fetch(req).then(resp => {
         if (resp && resp.status === 200 && resp.type === 'basic') {
           const clone = resp.clone();

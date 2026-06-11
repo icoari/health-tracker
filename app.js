@@ -141,7 +141,9 @@
     if (!state.entries[key]) state.entries[key] = {};
     state.entries[key][slot] = { ...data, savedAt: new Date().toISOString() };
     saveState(state);
-    pingWorker(key, slot);
+    // Only the soir slot silences the 23h reminder — pinging on every save
+    // let an evening edit of the matin slot cancel the reminder wrongly.
+    if (slot === 'soir') pingWorker(key, slot);
   }
 
   // Tell the Bob Worker that a slot was filled so the evening cron reminder
@@ -515,11 +517,16 @@
     container.innerHTML = '';
     const todayKey = dateKey(logicalToday());
 
+    // Future relative to the LOGICAL day (day flips at 4h, not midnight) —
+    // comparing to new Date() made the calendar-tomorrow cell editable
+    // between 0h and 4h.
+    const logicalLimit = addDays(parseKey(todayKey), 1);
+
     for (let i = 0; i < TOTAL_DAYS; i++) {
       const d = addDays(parseKey(START_DATE), i);
       const key = dateKey(d);
       const dayEntry = state.entries[key] || {};
-      const isFuture = d > new Date() && key !== todayKey;
+      const isFuture = d >= logicalLimit;
       const isToday = key === todayKey;
 
       const cell = document.createElement('div');
@@ -582,11 +589,11 @@
     const todayKey = dateKey(logicalToday());
     // Build daily series up to today
     const series = [];
+    const statsLimit = addDays(parseKey(todayKey), 1);
     for (let i = 0; i < TOTAL_DAYS; i++) {
       const d = addDays(parseKey(START_DATE), i);
       const k = dateKey(d);
-      const isFuture = d > new Date() && k !== todayKey;
-      if (isFuture) break;
+      if (d >= statsLimit) break;
       const dayE = state.entries[k] || {};
       let sum = 0, n = 0, cachet = 0, crise = 0, criseInt = 0;
       SLOTS.forEach(s => {
