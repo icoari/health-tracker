@@ -405,6 +405,8 @@ body {
   border-radius: 8px;
 }
 
+.note-dots--bristol { gap: 4px; }
+
 .note-dots--bristol .note-dot--active {
   background: var(--accent-soft);
   border-color: var(--accent-glow);
@@ -427,6 +429,14 @@ body {
   padding-left: 76px;
   letter-spacing: 0.02em;
 }
+
+/* Meal size selector (Léger / Normal / Copieux) */
+.size-chips {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+.size-chips .tag-chip { flex: 1; text-align: center; }
 
 /* Meal tag chips */
 .tag-chips {
@@ -562,6 +572,13 @@ body.theme-light .time-input {
 .notes-input::placeholder {
   color: var(--text-faint);
 }
+
+/* Missing-note flash — secondary fields need a note to persist */
+@keyframes noteRequired {
+  0%, 100% { box-shadow: none; }
+  25%, 75% { box-shadow: 0 0 0 2px rgba(226, 109, 92, 0.55); border-radius: 12px; }
+}
+.note-dots--required { animation: noteRequired 900ms var(--ease) 2; }
 
 /* crise / notes toggle on-states */
 .toggle--crise.toggle--on .toggle__switch {
@@ -788,10 +805,6 @@ body.theme-light .time-input {
 .day--today {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-glow);
-}
-
-.day--crise {
-  border-color: var(--danger);
 }
 
 .day:hover:not(.day--future) {

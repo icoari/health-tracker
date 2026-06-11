@@ -125,11 +125,6 @@
     return diff + 1;
   }
 
-  function isInPeriod(key) {
-    const n = dayNumber(key);
-    return n >= 1 && n <= TOTAL_DAYS;
-  }
-
   // Last day of the treatment phase (inclusive).
   function treatmentEndKey() {
     return dateKey(addDays(parseKey(START_DATE), TOTAL_DAYS - 1));
@@ -438,7 +433,17 @@
     }
 
     function commit() {
-      if (draft.note === null) return;
+      if (draft.note === null) {
+        // Make the missing-note state visible — the secondary fields look
+        // saved but nothing persists without a note.
+        const row = card.querySelector('[data-dots="note"]');
+        if (row) {
+          row.classList.remove('note-dots--required');
+          void row.offsetWidth;   // restart the animation
+          row.classList.add('note-dots--required');
+        }
+        return;
+      }
       setEntry(key, slot, {
         note: draft.note,
         cachet: draft.cachet,
@@ -761,7 +766,7 @@
   // Legacy 31-day strip — the exact view used during the treatment, kept
   // verbatim for the doctor consultation.
   function renderTreatmentStrip(container, todayKey, logicalLimit) {
-    document.getElementById('monthLabel').textContent = 'Traitement · 14 mai → 13 juin';
+    document.getElementById('monthLabel').textContent = `Traitement · ${formatDateLong(parseKey(START_DATE))} → ${formatDateLong(parseKey(treatmentEndKey()))}`;
     for (let i = 0; i < TOTAL_DAYS; i++) {
       const d = addDays(parseKey(START_DATE), i);
       const key = dateKey(d);
@@ -807,7 +812,7 @@
       cell.appendChild(num);
 
       if (!isFuture) {
-        cell.addEventListener('click', () => { haptic(6); openModalFor(key); });
+        cell.addEventListener('click', (e) => { e.stopPropagation(); haptic(6); openModalFor(key); });
       }
       container.appendChild(cell);
     }
@@ -895,7 +900,7 @@
       cell.appendChild(num);
 
       if (!isFuture && !beforeStart) {
-        cell.addEventListener('click', () => { haptic(6); openModalFor(key); });
+        cell.addEventListener('click', (e) => { e.stopPropagation(); haptic(6); openModalFor(key); });
       }
 
       container.appendChild(cell);
@@ -1023,8 +1028,11 @@
 
     // Streak (consecutive days at the end with all 3 slots filled)
     let streak = 0;
-    for (let i = series.length - 1; i >= 0; i--) {
-      if (series[i].count === 3) streak++;
+    let si = series.length - 1;
+    const todayK = dateKey(logicalToday());
+    if (si >= 0 && series[si].key === todayK && series[si].count < 3) si--;
+    for (; si >= 0; si--) {
+      if (series[si].count === 3) streak++;
       else break;
     }
 
