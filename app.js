@@ -692,6 +692,7 @@
 
   // ---------- Calendar (month view, navigable) ----------
   let viewYear, viewMonth;   // initialised at startup to the logical today
+  let calView = 'month';     // 'month' | 'treatment' (legacy doctor view)
 
   function initMonthView() {
     const t = logicalToday();
@@ -709,6 +710,73 @@
       if (viewMonth > 11) { viewMonth = 0; viewYear++; }
       renderHeatmap();
     });
+    document.getElementById('calViewToggle').addEventListener('click', () => {
+      haptic(6);
+      calView = calView === 'month' ? 'treatment' : 'month';
+      const btn = document.getElementById('calViewToggle');
+      btn.textContent = calView === 'month' ? 'Vue traitement' : 'Vue mensuelle';
+      btn.classList.toggle('month-nav__toggle--active', calView === 'treatment');
+      const showNav = calView === 'month';
+      document.getElementById('monthPrev').style.display = showNav ? '' : 'none';
+      document.getElementById('monthNext').style.display = showNav ? '' : 'none';
+      renderHeatmap();
+    });
+  }
+
+  // Legacy 31-day strip — the exact view used during the treatment, kept
+  // verbatim for the doctor consultation.
+  function renderTreatmentStrip(container, todayKey, logicalLimit) {
+    document.getElementById('monthLabel').textContent = 'Traitement · 14 mai → 13 juin';
+    for (let i = 0; i < TOTAL_DAYS; i++) {
+      const d = addDays(parseKey(START_DATE), i);
+      const key = dateKey(d);
+      const dayEntry = state.entries[key] || {};
+      const isFuture = d >= logicalLimit;
+      const isToday = key === todayKey;
+
+      const cell = document.createElement('div');
+      cell.className = 'day';
+      if (isToday) cell.classList.add('day--today');
+      if (isFuture) cell.classList.add('day--future');
+      cell.style.animationDelay = `${i * 14}ms`;
+      cell.dataset.date = key;
+
+      const bands = document.createElement('div');
+      bands.className = 'day__bands';
+      const tipLines = [formatDateLong(d)];
+
+      SLOTS.forEach(s => {
+        const band = document.createElement('div');
+        band.className = 'day__band';
+        const e = dayEntry[s];
+        if (e) {
+          const bg = bandColor(e.note);
+          if (bg) band.style.background = bg;
+          const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
+          if (c > 0) band.classList.add('day__band--crise');
+          if (e.notes && e.notes.trim()) band.classList.add('day__band--comment');
+          let line = `${SLOT_LABELS[s]} · ${e.note}/5`;
+          if (e.cachet) line += ' · cachet';
+          if (c > 0) line += ` · crise ${c}/5${e.criseTime ? ' à ' + e.criseTime : ''}`;
+          tipLines.push(line);
+        }
+        bands.appendChild(band);
+      });
+
+      cell.appendChild(bands);
+      cell.title = tipLines.join('\n');
+
+      const num = document.createElement('span');
+      num.className = 'day__num';
+      num.textContent = d.getDate();
+      cell.appendChild(num);
+
+      if (!isFuture) {
+        cell.addEventListener('click', () => { haptic(6); openModalFor(key); });
+      }
+      container.appendChild(cell);
+    }
+    document.getElementById('monthLegend').innerHTML = '';
   }
 
   function renderHeatmap() {
@@ -716,6 +784,11 @@
     container.innerHTML = '';
     const todayKey = dateKey(logicalToday());
     const logicalLimit = addDays(parseKey(todayKey), 1);
+
+    if (calView === 'treatment') {
+      renderTreatmentStrip(container, todayKey, logicalLimit);
+      return;
+    }
 
     document.getElementById('monthLabel').textContent =
       new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(new Date(viewYear, viewMonth, 1));

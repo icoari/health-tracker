@@ -665,6 +665,28 @@ body.theme-light .time-input {
   margin-bottom: 14px;
 }
 
+.month-nav__toggle {
+  padding: 6px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  margin-right: 6px;
+  transition: all 160ms var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+.month-nav__toggle:hover { color: var(--text); border-color: var(--border-strong); }
+.month-nav__toggle--active {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent);
+}
+
 .month-nav__btn {
   width: 28px;
   height: 28px;
