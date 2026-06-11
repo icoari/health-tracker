@@ -393,6 +393,110 @@ body {
   pointer-events: auto;
 }
 
+/* The Symptômes block stacks three rows + a caption */
+.reveal-block__content--tall.reveal-block__content--open {
+  max-height: 340px;
+}
+
+/* Bristol scale: 7 smaller dots */
+.note-dot--sm {
+  height: 32px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.note-dots--bristol .note-dot--active {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent);
+}
+/* Types 6-7 (liquide) and 1-2 (constipation) tint red when selected */
+.note-dots--bristol .note-dot--active[data-value="1"],
+.note-dots--bristol .note-dot--active[data-value="2"],
+.note-dots--bristol .note-dot--active[data-value="6"],
+.note-dots--bristol .note-dot--active[data-value="7"] {
+  background: var(--danger-soft);
+  border-color: rgba(226, 109, 92, 0.35);
+  color: var(--danger);
+}
+
+.bristol-caption {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 6px;
+  padding-left: 76px;
+  letter-spacing: 0.02em;
+}
+
+/* Meal tag chips */
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 160ms var(--ease);
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+body.theme-light .tag-chip { background: rgba(20, 20, 30, 0.035); }
+.tag-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.tag-chip--active {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Symptômes / Repas toggle on-states */
+.toggle--sympt.toggle--on .toggle__label,
+.toggle--meal.toggle--on .toggle__label { color: var(--text); }
+
+/* Stats range tabs */
+.stats__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.range-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.range-tab {
+  padding: 6px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 160ms var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+.range-tab:hover { color: var(--text); }
+.range-tab--active {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* time input (crise hour) */
 .time-row {
   display: flex;
@@ -547,6 +651,64 @@ body.theme-light .time-input {
   margin-bottom: 32px;
 }
 
+.month__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.month-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.month-nav__btn {
+  width: 28px;
+  height: 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
+}
+.month-nav__btn:hover { color: var(--text); border-color: var(--border-strong); }
+
+.month-nav__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  min-width: 96px;
+  text-align: center;
+  text-transform: capitalize;
+  font-variant-numeric: tabular-nums;
+}
+
+.month__legend {
+  margin-top: 10px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 14px;
+}
+
+.month__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  border: 1.5px solid var(--accent-glow);
+  display: inline-block;
+}
+
 .heatmap {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -577,6 +739,28 @@ body.theme-light .time-input {
   cursor: default;
   opacity: 0.4 !important;
   animation: none;
+}
+
+.day--pad {
+  background: transparent;
+  border: none;
+  cursor: default;
+  opacity: 1;
+  animation: none;
+  pointer-events: none;
+}
+
+/* Treatment-period marker: subtle accent ring at the bottom edge */
+.day--treatment::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent-glow);
+  pointer-events: none;
 }
 
 .day--today {

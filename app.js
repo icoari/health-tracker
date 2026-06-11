@@ -14,11 +14,20 @@
 
   // ---------- Config ----------
   const STORAGE_KEY = 'health-tracker-v1';
-  const START_DATE = '2026-05-14';
-  const TOTAL_DAYS = 31;
+  const START_DATE = '2026-05-14';     // début du traitement — base du rapport médecin
+  const TOTAL_DAYS = 31;               // période de traitement (vue figée pour le médecin)
   const SLOTS = ['matin', 'midi', 'soir'];
   const SLOT_LABELS = { matin: 'Matin', midi: 'Midi', soir: 'Soir' };
   const SLOT_HOURS = { matin: '04h – 12h', midi: '12h – 18h', soir: '18h – 04h' };
+
+  // Échelle de Bristol — standard clinique pour le transit. 3-4 = normal.
+  const BRISTOL_LABELS = {
+    1: 'Billes dures', 2: 'Grumeleux', 3: 'Fissuré',
+    4: 'Lisse — idéal', 5: 'Morceaux mous', 6: 'Bouillie', 7: 'Liquide',
+  };
+
+  // Tags repas / contexte — la base de la recherche de déclencheurs.
+  const MEAL_TAGS = ['Gras', 'Épicé', 'Lactose', 'Gluten', 'Café', 'Alcool', 'Sucré', 'Cru', 'FODMAP', 'Resto'];
 
   const ICONS = {
     matin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
@@ -26,6 +35,8 @@
     soir:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
     pill:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 20.5a7.07 7.07 0 0 1-10-10l10-10a7.07 7.07 0 0 1 10 10z"/><path d="m8.5 8.5 7 7"/></svg>',
     crise: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    sympt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
+    meal:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>',
     notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="7" x2="19" y2="7"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="17" x2="14" y2="17"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>',
   };
@@ -110,6 +121,15 @@
     return n >= 1 && n <= TOTAL_DAYS;
   }
 
+  // Last day of the treatment phase (inclusive).
+  function treatmentEndKey() {
+    return dateKey(addDays(parseKey(START_DATE), TOTAL_DAYS - 1));
+  }
+
+  function isTreatmentDay(key) {
+    return key >= START_DATE && key <= treatmentEndKey();
+  }
+
   function formatDateLong(d) {
     return new Intl.DateTimeFormat('fr-FR', {
       weekday: 'long', day: 'numeric', month: 'long',
@@ -176,10 +196,14 @@
     const key = dateKey(today);
     document.getElementById('dateLabel').textContent = formatDateLong(today);
     const n = dayNumber(key);
-    const inPeriod = n >= 1 && n <= TOTAL_DAYS;
-    const label = inPeriod
-      ? `Jour ${n} / ${TOTAL_DAYS}`
-      : (n < 1 ? `Suivi commence le ${formatDateLong(parseKey(START_DATE))}` : 'Suivi terminé');
+    let label;
+    if (n < 1) {
+      label = `Suivi commence le ${formatDateLong(parseKey(START_DATE))}`;
+    } else if (n <= TOTAL_DAYS) {
+      label = `Traitement · jour ${n} / ${TOTAL_DAYS}`;
+    } else {
+      label = `Suivi continu · J+${n - TOTAL_DAYS} après traitement`;
+    }
     document.getElementById('progressLabel').textContent = label;
   }
 
@@ -200,8 +224,12 @@
           crise: typeof initial.crise === 'number' ? initial.crise : (initial.crise ? 3 : 0),
           criseTime: typeof initial.criseTime === 'string' ? initial.criseTime : '',
           notes: typeof initial.notes === 'string' ? initial.notes : '',
+          douleur: typeof initial.douleur === 'number' ? initial.douleur : 0,
+          transit: typeof initial.transit === 'number' ? initial.transit : 0,
+          stress: typeof initial.stress === 'number' ? initial.stress : 0,
+          tags: Array.isArray(initial.tags) ? [...initial.tags] : [],
         }
-      : { note: null, cachet: false, crise: 0, criseTime: '', notes: '' };
+      : { note: null, cachet: false, crise: 0, criseTime: '', notes: '', douleur: 0, transit: 0, stress: 0, tags: [] };
 
     const card = document.createElement('article');
     card.className = 'slot';
@@ -248,12 +276,50 @@
           </div>
         </div>
         <div class="reveal-block">
+          <button type="button" class="toggle toggle--sympt" data-toggle="sympt">
+            <span class="toggle__label">${ICONS.sympt}<span>Symptômes</span></span>
+            <span class="toggle__switch"></span>
+          </button>
+          <div class="reveal-block__content reveal-block__content--tall" data-reveal="sympt">
+            <div class="note-row">
+              <span class="note-row__label">Douleur</span>
+              <div class="note-dots note-dots--crise" data-dots="douleur">
+                ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="note-dot" data-value="${n}">${n}</button>`).join('')}
+              </div>
+            </div>
+            <div class="note-row" style="margin-top:12px">
+              <span class="note-row__label">Transit</span>
+              <div class="note-dots note-dots--bristol" data-dots="transit">
+                ${[1, 2, 3, 4, 5, 6, 7].map(n => `<button type="button" class="note-dot note-dot--sm" data-value="${n}">${n}</button>`).join('')}
+              </div>
+            </div>
+            <div class="bristol-caption" data-bristol-caption>Échelle de Bristol · 3-4 = normal</div>
+            <div class="note-row" style="margin-top:12px">
+              <span class="note-row__label">Stress</span>
+              <div class="note-dots" data-dots="stress">
+                ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="note-dot" data-value="${n}">${n}</button>`).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="reveal-block">
+          <button type="button" class="toggle toggle--meal" data-toggle="meal">
+            <span class="toggle__label">${ICONS.meal}<span>Repas</span></span>
+            <span class="toggle__switch"></span>
+          </button>
+          <div class="reveal-block__content" data-reveal="meal">
+            <div class="tag-chips" data-tags-box>
+              ${MEAL_TAGS.map(t => `<button type="button" class="tag-chip" data-tag="${t}">${t}</button>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="reveal-block">
           <button type="button" class="toggle toggle--notes" data-toggle="notes">
             <span class="toggle__label">${ICONS.notes}<span>Commentaire</span></span>
             <span class="toggle__switch"></span>
           </button>
           <div class="reveal-block__content" data-reveal="notes">
-            <textarea class="notes-input" rows="3" placeholder="Repas, ressenti, déclencheur…" data-notes></textarea>
+            <textarea class="notes-input" rows="3" placeholder="Ressenti, contexte, déclencheur suspect…" data-notes></textarea>
           </div>
         </div>
       </div>
@@ -264,11 +330,20 @@
 
     const noteDots = card.querySelectorAll('[data-dots="note"] .note-dot');
     const criseDots = card.querySelectorAll('[data-dots="crise"] .note-dot');
+    const douleurDots = card.querySelectorAll('[data-dots="douleur"] .note-dot');
+    const transitDots = card.querySelectorAll('[data-dots="transit"] .note-dot');
+    const stressDots = card.querySelectorAll('[data-dots="stress"] .note-dot');
+    const tagChips = card.querySelectorAll('[data-tag]');
     const cachetBtn = card.querySelector('[data-toggle="cachet"]');
     const criseBtn = card.querySelector('[data-toggle="crise"]');
+    const symptBtn = card.querySelector('[data-toggle="sympt"]');
+    const mealBtn = card.querySelector('[data-toggle="meal"]');
     const notesBtn = card.querySelector('[data-toggle="notes"]');
     const criseReveal = card.querySelector('[data-reveal="crise"]');
+    const symptReveal = card.querySelector('[data-reveal="sympt"]');
+    const mealReveal = card.querySelector('[data-reveal="meal"]');
     const notesReveal = card.querySelector('[data-reveal="notes"]');
+    const bristolCaption = card.querySelector('[data-bristol-caption]');
     const notesInput = card.querySelector('[data-notes]');
     const criseTimeInput = card.querySelector('[data-crise-time]');
     const deleteBtn = card.querySelector('[data-delete]');
@@ -286,9 +361,32 @@
         const v = Number(d.dataset.value);
         d.classList.toggle('note-dot--active', draft.crise > 0 && v <= draft.crise);
       });
+      douleurDots.forEach(d => {
+        const v = Number(d.dataset.value);
+        d.classList.toggle('note-dot--active', draft.douleur > 0 && v <= draft.douleur);
+      });
+      transitDots.forEach(d => {
+        d.classList.toggle('note-dot--active', Number(d.dataset.value) === draft.transit);
+      });
+      stressDots.forEach(d => {
+        const v = Number(d.dataset.value);
+        d.classList.toggle('note-dot--active', draft.stress > 0 && v <= draft.stress);
+      });
+      tagChips.forEach(c => {
+        c.classList.toggle('tag-chip--active', draft.tags.includes(c.dataset.tag));
+      });
+      if (bristolCaption) {
+        bristolCaption.textContent = draft.transit > 0
+          ? `Bristol ${draft.transit} · ${BRISTOL_LABELS[draft.transit]}`
+          : 'Échelle de Bristol · 3-4 = normal';
+      }
       cachetBtn.classList.toggle('toggle--on', draft.cachet);
       criseBtn.classList.toggle('toggle--on', draft.crise > 0);
       criseReveal.classList.toggle('reveal-block__content--open', draft.crise > 0);
+      symptBtn.classList.toggle('toggle--on', symptOpen);
+      symptReveal.classList.toggle('reveal-block__content--open', symptOpen);
+      mealBtn.classList.toggle('toggle--on', mealOpen);
+      mealReveal.classList.toggle('reveal-block__content--open', mealOpen);
       notesBtn.classList.toggle('toggle--on', notesOpen);
       notesReveal.classList.toggle('reveal-block__content--open', notesOpen);
     }
@@ -301,6 +399,10 @@
         if (e.cachet) tags.push('<span class="slot__tag">Cachet</span>');
         const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
         if (c > 0) tags.push(`<span class="slot__tag slot__tag--crise">Crise ${c}/5</span>`);
+        if (e.douleur > 0) tags.push(`<span class="slot__tag slot__tag--crise">Douleur ${e.douleur}</span>`);
+        if (e.transit >= 6 || (e.transit >= 1 && e.transit <= 2)) tags.push(`<span class="slot__tag slot__tag--crise">B${e.transit}</span>`);
+        else if (e.transit > 0) tags.push(`<span class="slot__tag">B${e.transit}</span>`);
+        if (Array.isArray(e.tags) && e.tags.length) tags.push(`<span class="slot__tag slot__tag--notes">${e.tags.length} tag${e.tags.length > 1 ? 's' : ''}</span>`);
         if (e.notes && e.notes.trim()) tags.push('<span class="slot__tag slot__tag--notes">Note</span>');
         tagsEl.innerHTML = tags.join('');
       } else {
@@ -322,6 +424,10 @@
         crise: draft.crise,
         criseTime: draft.crise > 0 ? (draft.criseTime || '') : '',
         notes: (draft.notes || '').trim(),
+        douleur: draft.douleur,
+        transit: draft.transit,
+        stress: draft.stress,
+        tags: [...draft.tags],
       });
       hasEntry = true;
       card.classList.add('slot--has-entry');
@@ -340,6 +446,8 @@
     let deleteArmed = false;
     let deleteTimeout = null;
     let notesOpen = !!(draft.notes && draft.notes.trim());
+    let symptOpen = draft.douleur > 0 || draft.transit > 0 || draft.stress > 0;
+    let mealOpen = draft.tags.length > 0;
     let notesDebounce = null;
 
     // --- Note dots ---
@@ -415,6 +523,75 @@
       if (draft.note !== null) commit();
     });
 
+    // --- Douleur / Transit / Stress dots ---
+    douleurDots.forEach(d => {
+      d.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(8);
+        const v = Number(d.dataset.value);
+        draft.douleur = (v === draft.douleur) ? 0 : v;
+        resetDeleteState();
+        refreshControls();
+        commit();
+      });
+    });
+
+    transitDots.forEach(d => {
+      d.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(8);
+        const v = Number(d.dataset.value);
+        draft.transit = (v === draft.transit) ? 0 : v;
+        resetDeleteState();
+        refreshControls();
+        commit();
+      });
+    });
+
+    stressDots.forEach(d => {
+      d.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(8);
+        const v = Number(d.dataset.value);
+        draft.stress = (v === draft.stress) ? 0 : v;
+        resetDeleteState();
+        refreshControls();
+        commit();
+      });
+    });
+
+    // --- Tag chips ---
+    tagChips.forEach(c => {
+      c.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(6);
+        const t = c.dataset.tag;
+        const i = draft.tags.indexOf(t);
+        if (i >= 0) draft.tags.splice(i, 1);
+        else draft.tags.push(t);
+        resetDeleteState();
+        refreshControls();
+        commit();
+      });
+    });
+
+    // --- Symptômes / Repas toggles (expand/collapse only) ---
+    symptBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      haptic(8);
+      symptOpen = !symptOpen;
+      resetDeleteState();
+      refreshControls();
+    });
+
+    mealBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      haptic(8);
+      mealOpen = !mealOpen;
+      resetDeleteState();
+      refreshControls();
+    });
+
     // --- Notes toggle (expand/collapse only, never destructive) ---
     notesBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -451,10 +628,12 @@
       } else {
         resetDeleteState();
         deleteEntryStorage(key, slot);
-        draft = { note: null, cachet: false, crise: 0, criseTime: '', notes: '' };
+        draft = { note: null, cachet: false, crise: 0, criseTime: '', notes: '', douleur: 0, transit: 0, stress: 0, tags: [] };
         notesInput.value = '';
         criseTimeInput.value = '';
         notesOpen = false;
+        symptOpen = false;
+        mealOpen = false;
         hasEntry = false;
         card.classList.remove('slot--has-entry');
         card.classList.remove('slot--compact');
@@ -484,13 +663,12 @@
     const container = document.getElementById('slotsToday');
     container.innerHTML = '';
 
-    if (!isInPeriod(key)) {
+    // Continuous tracking: today is always editable, before or after the
+    // treatment window. Only block dates before the very first day.
+    if (dayNumber(key) < 1) {
       const msg = document.createElement('div');
       msg.className = 'done-message';
-      const n = dayNumber(key);
-      msg.textContent = n < 1
-        ? `Le suivi commencera le ${formatDateLong(parseKey(START_DATE))}.`
-        : 'Période de suivi terminée. Tu peux exporter tes données ci-dessous.';
+      msg.textContent = `Le suivi commencera le ${formatDateLong(parseKey(START_DATE))}.`;
       container.appendChild(msg);
       return;
     }
@@ -512,28 +690,61 @@
     return `hsla(${hue}, ${s}%, ${l}%, ${a})`;
   }
 
+  // ---------- Calendar (month view, navigable) ----------
+  let viewYear, viewMonth;   // initialised at startup to the logical today
+
+  function initMonthView() {
+    const t = logicalToday();
+    viewYear = t.getFullYear();
+    viewMonth = t.getMonth();
+    document.getElementById('monthPrev').addEventListener('click', () => {
+      haptic(4);
+      viewMonth--;
+      if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+      renderHeatmap();
+    });
+    document.getElementById('monthNext').addEventListener('click', () => {
+      haptic(4);
+      viewMonth++;
+      if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+      renderHeatmap();
+    });
+  }
+
   function renderHeatmap() {
     const container = document.getElementById('heatmap');
     container.innerHTML = '';
     const todayKey = dateKey(logicalToday());
-
-    // Future relative to the LOGICAL day (day flips at 4h, not midnight) —
-    // comparing to new Date() made the calendar-tomorrow cell editable
-    // between 0h and 4h.
     const logicalLimit = addDays(parseKey(todayKey), 1);
 
-    for (let i = 0; i < TOTAL_DAYS; i++) {
-      const d = addDays(parseKey(START_DATE), i);
+    document.getElementById('monthLabel').textContent =
+      new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(new Date(viewYear, viewMonth, 1));
+
+    // Calendar-aligned grid: pad to the Monday of the first week.
+    const first = new Date(viewYear, viewMonth, 1);
+    const padDays = (first.getDay() + 6) % 7;   // 0 = Monday
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+    for (let p = 0; p < padDays; p++) {
+      const pad = document.createElement('div');
+      pad.className = 'day day--pad';
+      container.appendChild(pad);
+    }
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      const d = new Date(viewYear, viewMonth, i);
       const key = dateKey(d);
       const dayEntry = state.entries[key] || {};
       const isFuture = d >= logicalLimit;
       const isToday = key === todayKey;
+      const beforeStart = key < START_DATE;
 
       const cell = document.createElement('div');
       cell.className = 'day';
       if (isToday) cell.classList.add('day--today');
-      if (isFuture) cell.classList.add('day--future');
-      cell.style.animationDelay = `${i * 14}ms`;
+      if (isFuture || beforeStart) cell.classList.add('day--future');
+      if (isTreatmentDay(key)) cell.classList.add('day--treatment');
+      cell.style.animationDelay = `${i * 10}ms`;
       cell.dataset.date = key;
 
       const bands = document.createElement('div');
@@ -559,6 +770,8 @@
           let line = `${SLOT_LABELS[s]} · ${e.note}/5`;
           if (e.cachet) line += ' · cachet';
           if (c > 0) line += ` · crise ${c}/5${e.criseTime ? ' à ' + e.criseTime : ''}`;
+          if (e.douleur > 0) line += ` · douleur ${e.douleur}/5`;
+          if (e.transit > 0) line += ` · Bristol ${e.transit}`;
           if (e.notes && e.notes.trim()) line += ' · commentaire';
           tipLines.push(line);
         }
@@ -570,50 +783,108 @@
 
       const num = document.createElement('span');
       num.className = 'day__num';
-      num.textContent = d.getDate();
+      num.textContent = i;
       cell.appendChild(num);
 
-      if (!isFuture) {
+      if (!isFuture && !beforeStart) {
         cell.addEventListener('click', () => { haptic(6); openModalFor(key); });
       }
 
       container.appendChild(cell);
     }
+
+    // Legend: only when the visible month overlaps the treatment window.
+    const legendEl = document.getElementById('monthLegend');
+    const monthStartKey = dateKey(new Date(viewYear, viewMonth, 1));
+    const monthEndKey = dateKey(new Date(viewYear, viewMonth, daysInMonth));
+    const overlapsTreatment = monthStartKey <= treatmentEndKey() && monthEndKey >= START_DATE;
+    legendEl.innerHTML = overlapsTreatment
+      ? '<span class="month__legend-dot"></span> période de traitement'
+      : '';
   }
 
   // ---------- Stats trend card ----------
+  let statsRange = 'treatment';   // 'treatment' | 'last30' | 'all'
+
+  function initRangeTabs() {
+    const el = document.getElementById('rangeTabs');
+    if (!el) return;
+    // Default to the most relevant range: treatment while it's running,
+    // last-30-days afterwards.
+    if (dayNumber(dateKey(logicalToday())) > TOTAL_DAYS) statsRange = 'last30';
+    const tabs = [
+      { id: 'treatment', label: 'Traitement' },
+      { id: 'last30', label: '30 jours' },
+      { id: 'all', label: 'Tout' },
+    ];
+    el.innerHTML = tabs.map(t =>
+      `<button class="range-tab ${statsRange === t.id ? 'range-tab--active' : ''}" data-range="${t.id}" type="button">${t.label}</button>`
+    ).join('');
+    el.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-range]');
+      if (!btn) return;
+      haptic(4);
+      statsRange = btn.dataset.range;
+      el.querySelectorAll('.range-tab').forEach(b =>
+        b.classList.toggle('range-tab--active', b.dataset.range === statsRange));
+      renderStats();
+    });
+  }
+
+  function statsDateRange() {
+    const todayK = dateKey(logicalToday());
+    if (statsRange === 'treatment') {
+      return { from: START_DATE, to: treatmentEndKey() < todayK ? treatmentEndKey() : todayK };
+    }
+    if (statsRange === 'last30') {
+      const from = dateKey(addDays(parseKey(todayK), -29));
+      return { from: from < START_DATE ? START_DATE : from, to: todayK };
+    }
+    return { from: START_DATE, to: todayK };
+  }
+
   function renderStats() {
     const container = document.getElementById('statsCard');
     if (!container) return;
 
-    const todayKey = dateKey(logicalToday());
-    // Build daily series up to today
+    const { from, to } = statsDateRange();
     const series = [];
-    const statsLimit = addDays(parseKey(todayKey), 1);
-    for (let i = 0; i < TOTAL_DAYS; i++) {
-      const d = addDays(parseKey(START_DATE), i);
-      const k = dateKey(d);
-      if (d >= statsLimit) break;
+    let cursor = parseKey(from);
+    const end = parseKey(to);
+    while (cursor <= end) {
+      const k = dateKey(cursor);
       const dayE = state.entries[k] || {};
       let sum = 0, n = 0, cachet = 0, crise = 0, criseInt = 0;
+      let douleurSum = 0, douleurN = 0, transitNormal = 0, transitAbnormal = 0;
       SLOTS.forEach(s => {
         const e = dayE[s];
         if (!e) return;
         sum += e.note; n++;
         if (e.cachet) cachet++;
         if (e.crise > 0) { crise++; criseInt += e.crise; }
+        if (typeof e.douleur === 'number' && e.douleur > 0) { douleurSum += e.douleur; douleurN++; }
+        if (typeof e.transit === 'number' && e.transit > 0) {
+          if (e.transit >= 3 && e.transit <= 4) transitNormal++;
+          else transitAbnormal++;
+        }
       });
-      series.push({ key: k, avg: n ? sum / n : null, count: n, cachet, crise, criseInt });
+      series.push({ key: k, avg: n ? sum / n : null, count: n, cachet, crise, criseInt, douleurSum, douleurN, transitNormal, transitAbnormal });
+      cursor = addDays(cursor, 1);
     }
 
     let totalNote = 0, totalNoteCount = 0;
     let totalCachet = 0, totalCrise = 0, totalCriseIntensity = 0;
+    let totalDouleurSum = 0, totalDouleurN = 0, totalTransitNormal = 0, totalTransitAbnormal = 0;
     for (const day of series) {
       totalNote += (day.avg ?? 0) * day.count;
       totalNoteCount += day.count;
       totalCachet += day.cachet;
       totalCrise += day.crise;
       totalCriseIntensity += day.criseInt;
+      totalDouleurSum += day.douleurSum;
+      totalDouleurN += day.douleurN;
+      totalTransitNormal += day.transitNormal;
+      totalTransitAbnormal += day.transitAbnormal;
     }
 
     if (totalNoteCount === 0) {
@@ -724,6 +995,8 @@
         <span class="stats-card__sec-item">Série<strong>${streak} j</strong></span>
         <span class="stats-card__sec-item">Cachets<strong>${cachetPct}%</strong></span>
         <span class="stats-card__sec-item">Crises<strong>${totalCrise}${totalCrise > 0 ? ` · ${(totalCriseIntensity / totalCrise).toFixed(1)}/5` : ''}</strong></span>
+        ${totalDouleurN > 0 ? `<span class="stats-card__sec-item">Douleur<strong>${(totalDouleurSum / totalDouleurN).toFixed(1)}/5</strong></span>` : ''}
+        ${(totalTransitNormal + totalTransitAbnormal) > 0 ? `<span class="stats-card__sec-item">Transit normal<strong>${Math.round(totalTransitNormal / (totalTransitNormal + totalTransitAbnormal) * 100)}%</strong></span>` : ''}
       </div>
     `;
   }
@@ -771,6 +1044,8 @@
   // ---------- Init ----------
   renderHeader();
   renderToday();
+  initMonthView();
+  initRangeTabs();
   renderHeatmap();
   renderStats();
 })();

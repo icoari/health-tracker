@@ -46,12 +46,23 @@
     </section>
 
     <section class="month">
-      <h2 class="section-title">Le mois</h2>
+      <div class="month__head">
+        <h2 class="section-title">Calendrier</h2>
+        <div class="month-nav">
+          <button class="month-nav__btn" id="monthPrev" type="button" aria-label="Mois précédent">‹</button>
+          <span class="month-nav__label" id="monthLabel">—</span>
+          <button class="month-nav__btn" id="monthNext" type="button" aria-label="Mois suivant">›</button>
+        </div>
+      </div>
       <div class="heatmap" id="heatmap"></div>
+      <div class="month__legend" id="monthLegend"></div>
     </section>
 
     <section class="stats">
-      <h2 class="section-title">Tendance</h2>
+      <div class="stats__head">
+        <h2 class="section-title">Tendance</h2>
+        <div class="range-tabs" id="rangeTabs"></div>
+      </div>
       <div class="stats-card" id="statsCard"></div>
     </section>
 
