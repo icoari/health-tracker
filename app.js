@@ -27,7 +27,16 @@
   };
 
   // Tags repas / contexte — la base de la recherche de déclencheurs.
-  const MEAL_TAGS = ['Gras', 'Épicé', 'Lactose', 'Gluten', 'Café', 'Alcool', 'Sucré', 'Cru', 'FODMAP', 'Resto'];
+  // « Amandes » a son propre tag : expérience ON/OFF/ON concluante à confirmer.
+  const MEAL_TAGS = ['Amandes', 'Gras', 'Épicé', 'Lactose', 'Café', 'Alcool', 'Sucré', 'Cru', 'Resto'];
+
+  // Taille du repas — le déclencheur principal identifié est la QUANTITÉ
+  // (réflexe gastro-colique : plus l'estomac se distend, plus le côlon réagit).
+  const MEAL_SIZES = [
+    { id: 'leger',   label: 'Léger' },
+    { id: 'normal',  label: 'Normal' },
+    { id: 'copieux', label: 'Copieux' },
+  ];
 
   const ICONS = {
     matin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
@@ -228,8 +237,9 @@
           transit: typeof initial.transit === 'number' ? initial.transit : 0,
           stress: typeof initial.stress === 'number' ? initial.stress : 0,
           tags: Array.isArray(initial.tags) ? [...initial.tags] : [],
+          repas: typeof initial.repas === 'string' ? initial.repas : '',
         }
-      : { note: null, cachet: false, crise: 0, criseTime: '', notes: '', douleur: 0, transit: 0, stress: 0, tags: [] };
+      : { note: null, cachet: false, crise: 0, criseTime: '', notes: '', douleur: 0, transit: 0, stress: 0, tags: [], repas: '' };
 
     const card = document.createElement('article');
     card.className = 'slot';
@@ -307,8 +317,14 @@
             <span class="toggle__label">${ICONS.meal}<span>Repas</span></span>
             <span class="toggle__switch"></span>
           </button>
-          <div class="reveal-block__content" data-reveal="meal">
-            <div class="tag-chips" data-tags-box>
+          <div class="reveal-block__content reveal-block__content--tall" data-reveal="meal">
+            <div class="note-row">
+              <span class="note-row__label">Taille</span>
+              <div class="size-chips" data-size-box>
+                ${MEAL_SIZES.map(m => `<button type="button" class="tag-chip" data-size="${m.id}">${m.label}</button>`).join('')}
+              </div>
+            </div>
+            <div class="tag-chips" data-tags-box style="margin-top:12px">
               ${MEAL_TAGS.map(t => `<button type="button" class="tag-chip" data-tag="${t}">${t}</button>`).join('')}
             </div>
           </div>
@@ -334,6 +350,7 @@
     const transitDots = card.querySelectorAll('[data-dots="transit"] .note-dot');
     const stressDots = card.querySelectorAll('[data-dots="stress"] .note-dot');
     const tagChips = card.querySelectorAll('[data-tag]');
+    const sizeChips = card.querySelectorAll('[data-size]');
     const cachetBtn = card.querySelector('[data-toggle="cachet"]');
     const criseBtn = card.querySelector('[data-toggle="crise"]');
     const symptBtn = card.querySelector('[data-toggle="sympt"]');
@@ -375,6 +392,9 @@
       tagChips.forEach(c => {
         c.classList.toggle('tag-chip--active', draft.tags.includes(c.dataset.tag));
       });
+      sizeChips.forEach(c => {
+        c.classList.toggle('tag-chip--active', draft.repas === c.dataset.size);
+      });
       if (bristolCaption) {
         bristolCaption.textContent = draft.transit > 0
           ? `Bristol ${draft.transit} · ${BRISTOL_LABELS[draft.transit]}`
@@ -402,6 +422,7 @@
         if (e.douleur > 0) tags.push(`<span class="slot__tag slot__tag--crise">Douleur ${e.douleur}</span>`);
         if (e.transit >= 6 || (e.transit >= 1 && e.transit <= 2)) tags.push(`<span class="slot__tag slot__tag--crise">B${e.transit}</span>`);
         else if (e.transit > 0) tags.push(`<span class="slot__tag">B${e.transit}</span>`);
+        if (e.repas === 'copieux') tags.push('<span class="slot__tag">Copieux</span>');
         if (Array.isArray(e.tags) && e.tags.length) tags.push(`<span class="slot__tag slot__tag--notes">${e.tags.length} tag${e.tags.length > 1 ? 's' : ''}</span>`);
         if (e.notes && e.notes.trim()) tags.push('<span class="slot__tag slot__tag--notes">Note</span>');
         tagsEl.innerHTML = tags.join('');
@@ -428,6 +449,7 @@
         transit: draft.transit,
         stress: draft.stress,
         tags: [...draft.tags],
+        repas: draft.repas || '',
       });
       hasEntry = true;
       card.classList.add('slot--has-entry');
@@ -447,7 +469,7 @@
     let deleteTimeout = null;
     let notesOpen = !!(draft.notes && draft.notes.trim());
     let symptOpen = draft.douleur > 0 || draft.transit > 0 || draft.stress > 0;
-    let mealOpen = draft.tags.length > 0;
+    let mealOpen = draft.tags.length > 0 || !!draft.repas;
     let notesDebounce = null;
 
     // --- Note dots ---
@@ -575,6 +597,19 @@
       });
     });
 
+    // --- Taille du repas (single-select, re-tap to clear) ---
+    sizeChips.forEach(c => {
+      c.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(6);
+        const v = c.dataset.size;
+        draft.repas = (draft.repas === v) ? '' : v;
+        resetDeleteState();
+        refreshControls();
+        commit();
+      });
+    });
+
     // --- Symptômes / Repas toggles (expand/collapse only) ---
     symptBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -628,7 +663,7 @@
       } else {
         resetDeleteState();
         deleteEntryStorage(key, slot);
-        draft = { note: null, cachet: false, crise: 0, criseTime: '', notes: '', douleur: 0, transit: 0, stress: 0, tags: [] };
+        draft = { note: null, cachet: false, crise: 0, criseTime: '', notes: '', douleur: 0, transit: 0, stress: 0, tags: [], repas: '' };
         notesInput.value = '';
         criseTimeInput.value = '';
         notesOpen = false;
