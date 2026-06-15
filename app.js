@@ -48,6 +48,19 @@
     meal:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>',
     notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="7" x2="19" y2="7"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="17" x2="14" y2="17"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>',
+    etat:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><line x1="9" y1="9.5" x2="9.01" y2="9.5"/><line x1="15" y1="9.5" x2="15.01" y2="9.5"/></svg>',
+    wc:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C9 7 5.5 10.5 5.5 14a6.5 6.5 0 0 0 13 0c0-3.5-3.5-7-6.5-11.5z"/></svg>',
+    plus:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  };
+
+  // ---------- Event types (post-treatment continuous log) ----------
+  // The day's calendar colour comes from « état » events (note 1-5).
+  const EVENT_TYPES = {
+    etat:  { label: 'État',  icon: 'etat'  },
+    repas: { label: 'Repas', icon: 'meal'  },
+    wc:    { label: 'WC',    icon: 'wc'    },
+    crise: { label: 'Crise', icon: 'crise' },
   };
 
   // ---------- Haptics ----------
@@ -59,13 +72,18 @@
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { version: 1, startDate: START_DATE, entries: {} };
+      if (!raw) return { version: 2, startDate: START_DATE, entries: {}, events: [] };
       const parsed = JSON.parse(raw);
       if (!parsed.entries) parsed.entries = {};
+      if (!Array.isArray(parsed.events)) parsed.events = [];   // event log (v2)
       return parsed;
     } catch {
-      return { version: 1, startDate: START_DATE, entries: {} };
+      return { version: 2, startDate: START_DATE, entries: {}, events: [] };
     }
+  }
+
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
 
   function saveState(state) {
@@ -167,12 +185,12 @@
     saveState(state);
     // Only the soir slot silences the 23h reminder — pinging on every save
     // let an evening edit of the matin slot cancel the reminder wrongly.
-    if (slot === 'soir') pingWorker(key, slot);
+    if (slot === 'soir') pingWorker(key);
   }
 
-  // Tell the Bob Worker that a slot was filled so the evening cron reminder
-  // skips today. Best-effort, silent failure on offline / no sync.
-  function pingWorker(date, slot) {
+  // Tell the Bob Worker that something was logged today so the evening cron
+  // reminder skips today. Best-effort, silent on offline / no sync.
+  function pingWorker(date) {
     try {
       const raw = localStorage.getItem('bob-sync-v1');
       const sync = raw ? JSON.parse(raw) : null;
@@ -180,9 +198,84 @@
       fetch('https://bob.jz7w76ry59.workers.dev/health/ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sync.authToken },
-        body: JSON.stringify({ date, slot }),
+        body: JSON.stringify({ date, slot: 'soir' }),
       }).catch(() => {});
     } catch {}
+  }
+
+  // ---------- Event log helpers ----------
+  // A timestamp belongs to a logical day that flips at 04h (like the slots).
+  function logicalKeyOfTs(ts) {
+    const d = new Date(ts);
+    if (d.getHours() < 4) return dateKey(addDays(d, -1));
+    return dateKey(d);
+  }
+
+  // Timestamp to assign a new event for a given logical day: now if it's
+  // today, else noon of that date (so it lands on the right day).
+  function tsForKey(key) {
+    if (key === dateKey(logicalToday())) return Date.now();
+    const d = parseKey(key); d.setHours(12, 0, 0, 0); return d.getTime();
+  }
+
+  function eventsForKey(key) {
+    return (state.events || [])
+      .filter(e => logicalKeyOfTs(e.ts) === key)
+      .sort((a, b) => a.ts - b.ts);
+  }
+
+  function addEvent(type, data, key) {
+    if (!Array.isArray(state.events)) state.events = [];
+    const ev = { id: uid(), ts: tsForKey(key), type, ...data };
+    state.events.push(ev);
+    saveState(state);
+    pingWorker(key);
+    return ev;
+  }
+
+  function updateEvent(id, patch) {
+    const ev = (state.events || []).find(e => e.id === id);
+    if (ev) { Object.assign(ev, patch); saveState(state); }
+    return ev;
+  }
+
+  function removeEvent(id) {
+    if (!Array.isArray(state.events)) return null;
+    const i = state.events.findIndex(e => e.id === id);
+    if (i < 0) return null;
+    const [ev] = state.events.splice(i, 1);
+    saveState(state);
+    return ev;
+  }
+
+  function fmtClock(ts) {
+    return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Unified per-day rollup merging legacy slots + the event log. The calendar
+  // colour and the markers read from here.
+  function dayData(key) {
+    let noteSum = 0, noteN = 0, hasCrise = false, hasComment = false, count = 0;
+    const slots = state.entries[key];
+    if (slots) {
+      for (const s of SLOTS) {
+        const e = slots[s];
+        if (!e) continue;
+        count++;
+        if (typeof e.note === 'number') { noteSum += e.note; noteN++; }
+        const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
+        if (c > 0) hasCrise = true;
+        if (e.notes && e.notes.trim()) hasComment = true;
+      }
+    }
+    for (const ev of eventsForKey(key)) {
+      count++;
+      if (ev.type === 'etat' && typeof ev.note === 'number') { noteSum += ev.note; noteN++; }
+      if (ev.type === 'crise') hasCrise = true;
+      if (ev.type === 'wc' && ev.bristol >= 6) hasCrise = true;   // liquide ≈ crise
+      if (ev.note_text && ev.note_text.trim()) hasComment = true;
+    }
+    return { avg: noteN ? noteSum / noteN : null, hasCrise, hasComment, count };
   }
 
   function deleteEntryStorage(key, slot) {
@@ -697,24 +790,273 @@
     return card;
   }
 
-  function renderToday() {
-    const today = logicalToday();
-    const key = dateKey(today);
-    const container = document.getElementById('slotsToday');
-    container.innerHTML = '';
+  // ========================================================================
+  // Quick capture — one entry in a couple of taps. Tap a type, tap a value,
+  // it's saved with a timestamp. Optional details amend the just-saved entry.
+  // ========================================================================
+  const BRISTOL_HUE = { 1: 6, 2: 28, 3: 138, 4: 138, 5: 95, 6: 28, 7: 6 };  // 3-4 green, extremes red
 
-    // Continuous tracking: today is always editable, before or after the
-    // treatment window. Only block dates before the very first day.
-    if (dayNumber(key) < 1) {
-      const msg = document.createElement('div');
-      msg.className = 'done-message';
-      msg.textContent = `Le suivi commencera le ${formatDateLong(parseKey(START_DATE))}.`;
-      container.appendChild(msg);
-      return;
+  function quickCapture(host, key, refresh) {
+    host.classList.add('capture');
+    host.innerHTML = `
+      <div class="capture__grid">
+        ${Object.entries(EVENT_TYPES).map(([id, t]) =>
+          `<button class="cap-btn cap-btn--${id}" data-cap="${id}" type="button">
+             <span class="cap-btn__icon">${ICONS[t.icon]}</span>
+             <span class="cap-btn__label">${t.label}</span>
+           </button>`).join('')}
+      </div>
+      <div class="cap-picker" data-picker hidden></div>
+    `;
+    const grid = host.querySelector('.capture__grid');
+    const picker = host.querySelector('[data-picker]');
+    let activeType = null, lastId = null, autoTimer = null;
+
+    function armAutoClose() {
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(close, 6000);
+    }
+    function close() {
+      clearTimeout(autoTimer);
+      activeType = null; lastId = null;
+      picker.hidden = true; picker.innerHTML = '';
+      grid.querySelectorAll('.cap-btn').forEach(b => b.classList.remove('cap-btn--active'));
     }
 
-    SLOTS.forEach(slot => {
-      container.appendChild(buildSlotCard(key, slot));
+    function dots(n, cls = '') {
+      let h = `<div class="cap-dots ${cls}">`;
+      for (let i = 1; i <= n; i++) h += `<button type="button" class="cap-dot" data-v="${i}">${i}</button>`;
+      return h + '</div>';
+    }
+
+    function confirmLine(text) {
+      return `<div class="cap-confirm"><span class="cap-confirm__check">✓</span> ${escapeHtml(text)}</div>`;
+    }
+
+    function openType(type) {
+      activeType = type; lastId = null;
+      grid.querySelectorAll('.cap-btn').forEach(b => b.classList.toggle('cap-btn--active', b.dataset.cap === type));
+      picker.hidden = false;
+      renderPicker();
+      armAutoClose();
+    }
+
+    function renderPicker() {
+      if (activeType === 'etat') {
+        picker.innerHTML = `
+          <div class="cap-picker__head"><span>Comment tu te sens ?</span>${closeBtn()}</div>
+          ${dots(5, 'cap-dots--scale')}
+          <div data-after></div>`;
+      } else if (activeType === 'wc') {
+        picker.innerHTML = `
+          <div class="cap-picker__head"><span>Type de selle (Bristol)</span>${closeBtn()}</div>
+          ${dots(7, 'cap-dots--bristol')}
+          <div class="cap-hint">1-2 dur · 3-4 idéal · 6-7 liquide</div>
+          <div data-after></div>`;
+      } else if (activeType === 'crise') {
+        picker.innerHTML = `
+          <div class="cap-picker__head"><span>Intensité de la crise</span>${closeBtn()}</div>
+          ${dots(5, 'cap-dots--crise')}
+          <div data-after></div>`;
+      } else if (activeType === 'repas') {
+        picker.innerHTML = `
+          <div class="cap-picker__head"><span>Quantité du repas</span>${closeBtn()}</div>
+          <div class="cap-sizes">
+            ${MEAL_SIZES.map(m => `<button type="button" class="cap-size" data-size="${m.id}">${m.label}</button>`).join('')}
+          </div>
+          <div data-after></div>`;
+      }
+      wirePicker();
+    }
+
+    function closeBtn() { return `<button type="button" class="cap-x" data-close aria-label="Fermer">${ICONS.close}</button>`; }
+
+    function wirePicker() {
+      picker.querySelector('[data-close]')?.addEventListener('click', close);
+
+      // primary value dots
+      // First tap creates the entry; re-tapping a different value AMENDS it
+      // (changing your mind makes no duplicate).
+      picker.querySelectorAll('.cap-dot').forEach(d => {
+        d.addEventListener('click', () => {
+          haptic(10);
+          const v = Number(d.dataset.v);
+          const field = activeType === 'etat' ? 'note' : activeType === 'wc' ? 'bristol' : 'intensity';
+          if (lastId) updateEvent(lastId, { [field]: v });
+          else { const ev = addEvent(activeType, { [field]: v }, key); lastId = ev.id; }
+          if (activeType === 'etat')  afterEtat(v);
+          else if (activeType === 'wc')    afterWc(v);
+          else if (activeType === 'crise') afterCrise(v);
+          refresh();
+          armAutoClose();
+        });
+      });
+
+      // meal sizes
+      picker.querySelectorAll('.cap-size').forEach(b => {
+        b.addEventListener('click', () => {
+          haptic(10);
+          const size = b.dataset.size;
+          if (!lastId) { const ev = addEvent('repas', { size, tags: [] }, key); lastId = ev.id; }
+          else updateEvent(lastId, { size });
+          picker.querySelectorAll('.cap-size').forEach(x => x.classList.toggle('cap-size--active', x === b));
+          afterRepas();
+          refresh();
+          armAutoClose();
+        });
+      });
+    }
+
+    // ---- post-primary "amend last entry" panels ----
+    function afterEtat(v) {
+      const after = picker.querySelector('[data-after]');
+      after.innerHTML = `
+        ${confirmLine(`État ${v}/5 enregistré à ${fmtClock(Date.now())}`)}
+        <div class="cap-extra">
+          <div class="cap-extra__row"><span>Douleur ventre</span>${dotsMini('douleur')}</div>
+          <div class="cap-extra__row"><span>Stress</span>${dotsMini('stress')}</div>
+        </div>`;
+      wireMini(after);
+    }
+    function afterCrise(v) {
+      const after = picker.querySelector('[data-after]');
+      after.innerHTML = `
+        ${confirmLine(`Crise ${v}/5 enregistrée à ${fmtClock(Date.now())}`)}
+        <button type="button" class="cap-toggle" data-lop>${ICONS.pill}<span>Lopéramide pris</span></button>`;
+      after.querySelector('[data-lop]').addEventListener('click', (e) => {
+        haptic(8);
+        const on = !e.currentTarget.classList.contains('cap-toggle--on');
+        e.currentTarget.classList.toggle('cap-toggle--on', on);
+        updateEvent(lastId, { loperamide: on });
+        refresh(); armAutoClose();
+      });
+    }
+    function afterWc(v) {
+      const after = picker.querySelector('[data-after]');
+      after.innerHTML = confirmLine(`Bristol ${v} · ${BRISTOL_LABELS[v]} — ${fmtClock(Date.now())}`);
+    }
+    function afterRepas() {
+      const after = picker.querySelector('[data-after]');
+      const ev = (state.events || []).find(e => e.id === lastId);
+      const tags = ev?.tags || [];
+      after.innerHTML = `
+        ${confirmLine(`Repas enregistré à ${fmtClock(ev ? ev.ts : Date.now())}`)}
+        <div class="cap-tags">
+          ${MEAL_TAGS.map(t => `<button type="button" class="cap-tag ${tags.includes(t) ? 'cap-tag--active' : ''}" data-tag="${t}">${t}</button>`).join('')}
+        </div>`;
+      after.querySelectorAll('[data-tag]').forEach(b => {
+        b.addEventListener('click', () => {
+          haptic(6);
+          const cur = (state.events || []).find(e => e.id === lastId);
+          if (!cur) return;
+          const arr = Array.isArray(cur.tags) ? [...cur.tags] : [];
+          const t = b.dataset.tag;
+          const i = arr.indexOf(t);
+          if (i >= 0) arr.splice(i, 1); else arr.push(t);
+          updateEvent(lastId, { tags: arr });
+          b.classList.toggle('cap-tag--active');
+          refresh(); armAutoClose();
+        });
+      });
+    }
+
+    function dotsMini(field) {
+      let h = `<div class="cap-dots cap-dots--mini" data-mini="${field}">`;
+      for (let i = 1; i <= 5; i++) h += `<button type="button" class="cap-dot cap-dot--mini" data-v="${i}">${i}</button>`;
+      return h + '</div>';
+    }
+    function wireMini(scope) {
+      scope.querySelectorAll('[data-mini]').forEach(row => {
+        const field = row.dataset.mini;
+        row.querySelectorAll('.cap-dot').forEach(d => {
+          d.addEventListener('click', () => {
+            haptic(6);
+            const v = Number(d.dataset.v);
+            const cur = (state.events || []).find(e => e.id === lastId);
+            const newVal = cur && cur[field] === v ? 0 : v;
+            updateEvent(lastId, { [field]: newVal });
+            row.querySelectorAll('.cap-dot').forEach(x =>
+              x.classList.toggle('cap-dot--active', newVal > 0 && Number(x.dataset.v) <= newVal));
+            refresh(); armAutoClose();
+          });
+        });
+      });
+    }
+
+    grid.querySelectorAll('[data-cap]').forEach(b => {
+      b.addEventListener('click', () => {
+        haptic(8);
+        if (activeType === b.dataset.cap) { close(); return; }
+        openType(b.dataset.cap);
+      });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ---------- Today / day timeline ----------
+  function eventSummary(ev) {
+    if (ev.type === 'etat') {
+      const bits = [`État ${ev.note}/5`];
+      if (ev.douleur > 0) bits.push(`douleur ${ev.douleur}`);
+      if (ev.stress > 0) bits.push(`stress ${ev.stress}`);
+      return bits.join(' · ');
+    }
+    if (ev.type === 'repas') {
+      const size = MEAL_SIZES.find(m => m.id === ev.size)?.label || 'Repas';
+      const tags = (ev.tags || []).length ? ' · ' + ev.tags.join(', ') : '';
+      return `${size}${tags}`;
+    }
+    if (ev.type === 'wc') return `Bristol ${ev.bristol} · ${BRISTOL_LABELS[ev.bristol]}`;
+    if (ev.type === 'crise') return `Crise ${ev.intensity}/5${ev.loperamide ? ' · Lopéramide' : ''}`;
+    return ev.type;
+  }
+
+  function isBadEvent(ev) {
+    return (ev.type === 'crise') || (ev.type === 'wc' && (ev.bristol >= 6 || ev.bristol <= 2));
+  }
+
+  let undoTimer = null;
+  function renderTimeline(host, key, refresh) {
+    const evs = eventsForKey(key).slice().reverse();   // newest first
+    if (evs.length === 0) {
+      host.innerHTML = '<div class="timeline__empty">Aucune entrée. Tape un bouton ci-dessus.</div>';
+      return;
+    }
+    host.innerHTML = `<div class="timeline__list">${evs.map(ev => `
+      <div class="tl-row tl-row--${ev.type} ${isBadEvent(ev) ? 'tl-row--bad' : ''}" data-id="${ev.id}">
+        <span class="tl-row__time">${fmtClock(ev.ts)}</span>
+        <span class="tl-row__icon">${ICONS[EVENT_TYPES[ev.type].icon]}</span>
+        <span class="tl-row__text">${escapeHtml(eventSummary(ev))}</span>
+        <button class="tl-row__del" data-del="${ev.id}" type="button" aria-label="Supprimer">${ICONS.trash}</button>
+      </div>`).join('')}</div>
+      <div class="tl-undo" data-undo hidden></div>`;
+
+    host.querySelectorAll('[data-del]').forEach(b => {
+      b.addEventListener('click', () => {
+        haptic(12);
+        const removed = removeEvent(b.dataset.del);
+        refresh();
+        if (removed) showUndo(host, removed, refresh);
+      });
+    });
+  }
+
+  function showUndo(host, removed, refresh) {
+    const bar = host.querySelector('[data-undo]');
+    if (!bar) return;
+    bar.hidden = false;
+    bar.innerHTML = `<span>Entrée supprimée</span><button type="button" data-restore>Annuler</button>`;
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => { bar.hidden = true; }, 5000);
+    bar.querySelector('[data-restore]').addEventListener('click', () => {
+      if (!Array.isArray(state.events)) state.events = [];
+      state.events.push(removed);
+      saveState(state);
+      clearTimeout(undoTimer);
+      refresh();
     });
   }
 
@@ -847,10 +1189,10 @@
     for (let i = 1; i <= daysInMonth; i++) {
       const d = new Date(viewYear, viewMonth, i);
       const key = dateKey(d);
-      const dayEntry = state.entries[key] || {};
       const isFuture = d >= logicalLimit;
       const isToday = key === todayKey;
       const beforeStart = key < START_DATE;
+      const data = dayData(key);
 
       const cell = document.createElement('div');
       cell.className = 'day';
@@ -860,39 +1202,25 @@
       cell.style.animationDelay = `${i * 10}ms`;
       cell.dataset.date = key;
 
+      // Single fill from the day's unified état colour.
       const bands = document.createElement('div');
       bands.className = 'day__bands';
-
-      const tipLines = [formatDateLong(d)];
-
-      SLOTS.forEach(s => {
-        const band = document.createElement('div');
-        band.className = 'day__band';
-        const e = dayEntry[s];
-        if (e) {
-          const bg = bandColor(e.note);
-          if (bg) band.style.background = bg;
-          const c = typeof e.crise === 'number' ? e.crise : (e.crise ? 3 : 0);
-          if (c > 0) {
-            band.classList.add('day__band--crise');
-            band.dataset.criseLevel = c;
-          }
-          if (e.notes && e.notes.trim()) {
-            band.classList.add('day__band--comment');
-          }
-          let line = `${SLOT_LABELS[s]} · ${e.note}/5`;
-          if (e.cachet) line += ' · cachet';
-          if (c > 0) line += ` · crise ${c}/5${e.criseTime ? ' à ' + e.criseTime : ''}`;
-          if (e.douleur > 0) line += ` · douleur ${e.douleur}/5`;
-          if (e.transit > 0) line += ` · Bristol ${e.transit}`;
-          if (e.notes && e.notes.trim()) line += ' · commentaire';
-          tipLines.push(line);
-        }
-        bands.appendChild(band);
-      });
-
+      const band = document.createElement('div');
+      band.className = 'day__band';
+      const rounded = data.avg != null ? Math.round(data.avg) : 0;
+      const bg = bandColor(rounded);
+      if (bg) band.style.background = bg;
+      if (data.hasCrise) band.classList.add('day__band--crise');
+      if (data.hasComment) band.classList.add('day__band--comment');
+      bands.appendChild(band);
       cell.appendChild(bands);
-      cell.title = tipLines.join('\n');
+
+      // Tooltip
+      const tip = [formatDateLong(d)];
+      if (data.avg != null) tip.push(`état moyen ${data.avg.toFixed(1)}/5`);
+      if (data.hasCrise) tip.push('crise');
+      if (data.count) tip.push(`${data.count} entrée${data.count > 1 ? 's' : ''}`);
+      cell.title = tip.join(' · ');
 
       const num = document.createElement('span');
       num.className = 'day__num';
@@ -969,6 +1297,7 @@
       const dayE = state.entries[k] || {};
       let sum = 0, n = 0, cachet = 0, crise = 0, criseInt = 0;
       let douleurSum = 0, douleurN = 0, transitNormal = 0, transitAbnormal = 0;
+      // Legacy treatment slots
       SLOTS.forEach(s => {
         const e = dayE[s];
         if (!e) return;
@@ -981,6 +1310,19 @@
           else transitAbnormal++;
         }
       });
+      // Continuous event log
+      for (const ev of eventsForKey(k)) {
+        if (ev.type === 'etat') {
+          if (typeof ev.note === 'number') { sum += ev.note; n++; }
+          if (ev.douleur > 0) { douleurSum += ev.douleur; douleurN++; }
+        } else if (ev.type === 'crise') {
+          crise++; criseInt += ev.intensity || 0;
+          if (ev.loperamide) cachet++;
+        } else if (ev.type === 'wc' && ev.bristol > 0) {
+          if (ev.bristol >= 3 && ev.bristol <= 4) transitNormal++;
+          else transitAbnormal++;
+        }
+      }
       series.push({ key: k, avg: n ? sum / n : null, count: n, cachet, crise, criseInt, douleurSum, douleurN, transitNormal, transitAbnormal });
       cursor = addDays(cursor, 1);
     }
@@ -1001,7 +1343,7 @@
     }
 
     if (totalNoteCount === 0) {
-      container.innerHTML = '<div class="stats-card__empty">Pas encore de données enregistrées. Saisis ton premier créneau pour voir la tendance apparaître ici.</div>';
+      container.innerHTML = '<div class="stats-card__empty">Pas encore de données. Enregistre ta première entrée pour voir la tendance.</div>';
       return;
     }
 
@@ -1026,17 +1368,15 @@
       else deltaCls = 'stats-card__delta--neutral';
     }
 
-    // Streak (consecutive days at the end with all 3 slots filled)
+    // Streak: consecutive days at the end with at least one note logged.
+    // (Treatment days had 3 slots; continuous days have a variable count —
+    // "any entry that day" is the meaningful continuity measure now.)
     let streak = 0;
-    let si = series.length - 1;
-    const todayK = dateKey(logicalToday());
-    if (si >= 0 && series[si].key === todayK && series[si].count < 3) si--;
-    for (; si >= 0; si--) {
-      if (series[si].count === 3) streak++;
+    for (let si = series.length - 1; si >= 0; si--) {
+      if (series[si].avg !== null) streak++;
       else break;
     }
 
-    const cachetPct = totalNoteCount ? Math.round((totalCachet / totalNoteCount) * 100) : 0;
 
     // Build sparkline path
     const W = 100, H = 60, padY = 6;
@@ -1058,14 +1398,23 @@
       ? `<circle cx="${lastPoint.x.toFixed(2)}" cy="${lastPoint.y.toFixed(2)}" r="1.8" fill="var(--accent)" />`
       : '';
 
-    // ---- Second sparkline: every individual slot note in chronological order
+    // ---- Second sparkline: every individual note (slots + état events) in
+    // chronological order ----
+    const SLOT_PSEUDO_H = { matin: 8, midi: 13, soir: 20 };
     const slotNotes = [];
     for (const day of series) {
+      const pts = [];
       const dayE = state.entries[day.key] || {};
       SLOTS.forEach(s => {
         const e = dayE[s];
-        if (e && typeof e.note === 'number') slotNotes.push(e.note);
+        if (e && typeof e.note === 'number') pts.push({ t: SLOT_PSEUDO_H[s], note: e.note });
       });
+      for (const ev of eventsForKey(day.key)) {
+        if (ev.type === 'etat' && typeof ev.note === 'number') {
+          pts.push({ t: new Date(ev.ts).getHours() + new Date(ev.ts).getMinutes() / 60, note: ev.note });
+        }
+      }
+      pts.sort((a, b) => a.t - b.t).forEach(p => slotNotes.push(p.note));
     }
     let rawPath = '';
     let rawLastPoint = null;
@@ -1108,8 +1457,7 @@
         <div class="stats-card__sparkline-label">Toutes les notes (${slotNotes.length} saisies)</div>
       ` : ''}
       <div class="stats-card__secondary">
-        <span class="stats-card__sec-item">Série<strong>${streak} j</strong></span>
-        <span class="stats-card__sec-item">Cachets<strong>${cachetPct}%</strong></span>
+        <span class="stats-card__sec-item">Suivi<strong>${streak} j</strong></span>
         <span class="stats-card__sec-item">Crises<strong>${totalCrise}${totalCrise > 0 ? ` · ${(totalCriseIntensity / totalCrise).toFixed(1)}/5` : ''}</strong></span>
         ${totalDouleurN > 0 ? `<span class="stats-card__sec-item">Douleur<strong>${(totalDouleurSum / totalDouleurN).toFixed(1)}/5</strong></span>` : ''}
         ${(totalTransitNormal + totalTransitAbnormal) > 0 ? `<span class="stats-card__sec-item">Transit normal<strong>${Math.round(totalTransitNormal / (totalTransitNormal + totalTransitAbnormal) * 100)}%</strong></span>` : ''}
@@ -1126,9 +1474,27 @@
     document.getElementById('modalTitle').textContent = formatDateLong(d);
     const container = document.getElementById('slotsModal');
     container.innerHTML = '';
-    SLOTS.forEach(slot => {
-      container.appendChild(buildSlotCard(key, slot, { highlightCurrent: false, expandIfEmpty: true }));
-    });
+
+    if (isTreatmentDay(key)) {
+      // Treatment-era day → the original 3-slot editor (doctor data).
+      SLOTS.forEach(slot => {
+        container.appendChild(buildSlotCard(key, slot, { highlightCurrent: false, expandIfEmpty: true }));
+      });
+    } else {
+      // Continuous-log day → quick capture + that day's timeline.
+      const cap = document.createElement('div');
+      container.appendChild(cap);
+      const tl = document.createElement('div');
+      tl.className = 'timeline';
+      container.appendChild(tl);
+      const refreshModal = () => {
+        renderTimeline(tl, key, refreshModal);
+        renderHeatmap();
+        renderStats();
+      };
+      quickCapture(cap, key, refreshModal);
+      renderTimeline(tl, key, refreshModal);
+    }
     document.getElementById('modalBackdrop').classList.add('modal-backdrop--open');
   }
 
@@ -1156,6 +1522,28 @@
 
   // ---------- Modal: open all empty slots expanded by default ----------
   // (override default behavior — see openModalFor)
+
+  // ---------- Today capture + timeline ----------
+  function renderToday() {
+    const key = dateKey(logicalToday());
+    const capHost = document.getElementById('capture');
+    const tlHost = document.getElementById('timeline');
+    if (!capHost || !tlHost) return;
+
+    if (dayNumber(key) < 1) {
+      capHost.innerHTML = '';
+      tlHost.innerHTML = `<div class="timeline__empty">Le suivi commencera le ${formatDateLong(parseKey(START_DATE))}.</div>`;
+      return;
+    }
+
+    const refreshToday = () => {
+      renderTimeline(tlHost, key, refreshToday);
+      renderHeatmap();
+      renderStats();
+    };
+    quickCapture(capHost, key, refreshToday);
+    renderTimeline(tlHost, key, refreshToday);
+  }
 
   // ---------- Init ----------
   renderHeader();
