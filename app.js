@@ -884,6 +884,13 @@
           const field = activeType === 'etat' ? 'note' : activeType === 'wc' ? 'bristol' : 'intensity';
           if (lastId) updateEvent(lastId, { [field]: v });
           else { const ev = addEvent(activeType, { [field]: v }, key); lastId = ev.id; }
+          // Visual selection: WC = single (it's a category), the scales fill
+          // up to the chosen value.
+          const single = activeType === 'wc';
+          d.parentElement.querySelectorAll('.cap-dot').forEach(x => {
+            const xv = Number(x.dataset.v);
+            x.classList.toggle('cap-dot--active', single ? xv === v : xv <= v);
+          });
           if (activeType === 'etat')  afterEtat(v);
           else if (activeType === 'wc')    afterWc(v);
           else if (activeType === 'crise') afterCrise(v);

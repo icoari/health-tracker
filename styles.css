@@ -350,6 +350,9 @@ body.theme-light .cap-tag { background: rgba(20,20,30,0.035); }
   color: var(--text-dim);
   animation: capIn 200ms var(--ease);
 }
+/* The explicit display:flex above would otherwise override the hidden
+   attribute and leave an empty bar at the bottom of the timeline. */
+.tl-undo[hidden] { display: none; }
 .tl-undo button {
   background: none; border: none;
   color: var(--accent); font-family: inherit;
