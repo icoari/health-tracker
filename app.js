@@ -814,7 +814,7 @@
 
     function armAutoClose() {
       clearTimeout(autoTimer);
-      autoTimer = setTimeout(close, 6000);
+      autoTimer = setTimeout(close, 14000);   // leave time to add details / adjust the hour
     }
     function close() {
       clearTimeout(autoTimer);
@@ -829,8 +829,37 @@
       return h + '</div>';
     }
 
-    function confirmLine(text) {
-      return `<div class="cap-confirm"><span class="cap-confirm__check">✓</span> ${escapeHtml(text)}</div>`;
+    function toHHMM(ts) {
+      const d = new Date(ts);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+
+    // Confirmation line with an editable time — tap to adjust if you're
+    // logging after the fact.
+    function confirmBlock(label) {
+      const ev = (state.events || []).find(e => e.id === lastId);
+      const hhmm = toHHMM(ev ? ev.ts : Date.now());
+      return `<div class="cap-confirm">
+        <span class="cap-confirm__check">✓</span>
+        <span>${escapeHtml(label)} à</span>
+        <input type="time" class="cap-time" value="${hhmm}" data-time aria-label="Heure">
+      </div>`;
+    }
+
+    function wireTime(scope) {
+      const input = scope.querySelector('[data-time]');
+      if (!input) return;
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('change', () => {
+        const cur = (state.events || []).find(e => e.id === lastId);
+        if (!cur || !input.value) return;
+        const [hh, mm] = input.value.split(':').map(Number);
+        const d = new Date(cur.ts);
+        d.setHours(hh, mm, 0, 0);
+        updateEvent(lastId, { ts: d.getTime() });
+        refresh();
+        armAutoClose();
+      });
     }
 
     function openType(type) {
@@ -918,18 +947,20 @@
     function afterEtat(v) {
       const after = picker.querySelector('[data-after]');
       after.innerHTML = `
-        ${confirmLine(`État ${v}/5 enregistré à ${fmtClock(Date.now())}`)}
+        ${confirmBlock(`État ${v}/5`)}
         <div class="cap-extra">
           <div class="cap-extra__row"><span>Douleur ventre</span>${dotsMini('douleur')}</div>
           <div class="cap-extra__row"><span>Stress</span>${dotsMini('stress')}</div>
         </div>`;
+      wireTime(after);
       wireMini(after);
     }
     function afterCrise(v) {
       const after = picker.querySelector('[data-after]');
       after.innerHTML = `
-        ${confirmLine(`Crise ${v}/5 enregistrée à ${fmtClock(Date.now())}`)}
+        ${confirmBlock(`Crise ${v}/5`)}
         <button type="button" class="cap-toggle" data-lop>${ICONS.pill}<span>Lopéramide pris</span></button>`;
+      wireTime(after);
       after.querySelector('[data-lop]').addEventListener('click', (e) => {
         haptic(8);
         const on = !e.currentTarget.classList.contains('cap-toggle--on');
@@ -940,17 +971,19 @@
     }
     function afterWc(v) {
       const after = picker.querySelector('[data-after]');
-      after.innerHTML = confirmLine(`Bristol ${v} · ${BRISTOL_LABELS[v]} — ${fmtClock(Date.now())}`);
+      after.innerHTML = confirmBlock(`Bristol ${v} · ${BRISTOL_LABELS[v]}`);
+      wireTime(after);
     }
     function afterRepas() {
       const after = picker.querySelector('[data-after]');
       const ev = (state.events || []).find(e => e.id === lastId);
       const tags = ev?.tags || [];
       after.innerHTML = `
-        ${confirmLine(`Repas enregistré à ${fmtClock(ev ? ev.ts : Date.now())}`)}
+        ${confirmBlock('Repas')}
         <div class="cap-tags">
           ${MEAL_TAGS.map(t => `<button type="button" class="cap-tag ${tags.includes(t) ? 'cap-tag--active' : ''}" data-tag="${t}">${t}</button>`).join('')}
         </div>`;
+      wireTime(after);
       after.querySelectorAll('[data-tag]').forEach(b => {
         b.addEventListener('click', () => {
           haptic(6);
