@@ -270,10 +270,12 @@
     }
     for (const ev of eventsForKey(key)) {
       count++;
-      if (ev.type === 'etat' && typeof ev.note === 'number') { noteSum += ev.note; noteN++; }
+      // note = état rating; carried by état events AND optionally by any
+      // repas/wc/crise — all feed the day's colour.
+      if (typeof ev.note === 'number' && ev.note > 0) { noteSum += ev.note; noteN++; }
       if (ev.type === 'crise') hasCrise = true;
       if (ev.type === 'wc' && ev.bristol >= 6) hasCrise = true;   // liquide ≈ crise
-      if (ev.note_text && ev.note_text.trim()) hasComment = true;
+      if (ev.comment && ev.comment.trim()) hasComment = true;
     }
     return { avg: noteN ? noteSum / noteN : null, hasCrise, hasComment, count };
   }
@@ -944,23 +946,28 @@
     }
 
     // ---- post-primary "amend last entry" panels ----
+    // The non-état types now also capture an « état » (note) so the day gets
+    // more mood data points; all types accept a free-text comment.
     function afterEtat(v) {
       const after = picker.querySelector('[data-after]');
       after.innerHTML = `
         ${confirmBlock(`État ${v}/5`)}
         <div class="cap-extra">
-          <div class="cap-extra__row"><span>Douleur ventre</span>${dotsMini('douleur')}</div>
-          <div class="cap-extra__row"><span>Stress</span>${dotsMini('stress')}</div>
-        </div>`;
-      wireTime(after);
-      wireMini(after);
+          ${fieldRow('Douleur ventre', 'douleur')}
+          ${fieldRow('Stress', 'stress')}
+        </div>
+        ${commentRow()}`;
+      wireTime(after); wireFields(after); wireComment(after);
     }
     function afterCrise(v) {
       const after = picker.querySelector('[data-after]');
+      const ev = (state.events || []).find(e => e.id === lastId);
       after.innerHTML = `
         ${confirmBlock(`Crise ${v}/5`)}
-        <button type="button" class="cap-toggle" data-lop>${ICONS.pill}<span>Lopéramide pris</span></button>`;
-      wireTime(after);
+        <div class="cap-extra">${fieldRow('État', 'note')}</div>
+        <button type="button" class="cap-toggle ${ev?.loperamide ? 'cap-toggle--on' : ''}" data-lop>${ICONS.pill}<span>Lopéramide pris</span></button>
+        ${commentRow()}`;
+      wireTime(after); wireFields(after); wireComment(after);
       after.querySelector('[data-lop]').addEventListener('click', (e) => {
         haptic(8);
         const on = !e.currentTarget.classList.contains('cap-toggle--on');
@@ -971,8 +978,11 @@
     }
     function afterWc(v) {
       const after = picker.querySelector('[data-after]');
-      after.innerHTML = confirmBlock(`Bristol ${v} · ${BRISTOL_LABELS[v]}`);
-      wireTime(after);
+      after.innerHTML = `
+        ${confirmBlock(`Bristol ${v} · ${BRISTOL_LABELS[v]}`)}
+        <div class="cap-extra">${fieldRow('État', 'note')}</div>
+        ${commentRow()}`;
+      wireTime(after); wireFields(after); wireComment(after);
     }
     function afterRepas() {
       const after = picker.querySelector('[data-after]');
@@ -982,8 +992,10 @@
         ${confirmBlock('Repas')}
         <div class="cap-tags">
           ${MEAL_TAGS.map(t => `<button type="button" class="cap-tag ${tags.includes(t) ? 'cap-tag--active' : ''}" data-tag="${t}">${t}</button>`).join('')}
-        </div>`;
-      wireTime(after);
+        </div>
+        <div class="cap-extra">${fieldRow('État', 'note')}</div>
+        ${commentRow()}`;
+      wireTime(after); wireFields(after); wireComment(after);
       after.querySelectorAll('[data-tag]').forEach(b => {
         b.addEventListener('click', () => {
           haptic(6);
@@ -1000,27 +1012,82 @@
       });
     }
 
-    function dotsMini(field) {
-      let h = `<div class="cap-dots cap-dots--mini" data-mini="${field}">`;
+    // A labelled 1-5 dot row bound to an event field (douleur, stress, note…)
+    function fieldRow(label, field) {
+      let h = `<div class="cap-extra__row"><span>${escapeHtml(label)}</span><div class="cap-dots cap-dots--mini" data-field="${field}">`;
       for (let i = 1; i <= 5; i++) h += `<button type="button" class="cap-dot cap-dot--mini" data-v="${i}">${i}</button>`;
-      return h + '</div>';
+      return h + '</div></div>';
     }
-    function wireMini(scope) {
-      scope.querySelectorAll('[data-mini]').forEach(row => {
-        const field = row.dataset.mini;
+    function wireFields(scope) {
+      scope.querySelectorAll('[data-field]').forEach(row => {
+        const field = row.dataset.field;
+        const cur = (state.events || []).find(e => e.id === lastId);
+        const curV = cur && typeof cur[field] === 'number' ? cur[field] : 0;
+        const mark = (val) => row.querySelectorAll('.cap-dot').forEach(x =>
+          x.classList.toggle('cap-dot--active', val > 0 && Number(x.dataset.v) <= val));
+        mark(curV);   // reflect stored value (matters when editing)
         row.querySelectorAll('.cap-dot').forEach(d => {
           d.addEventListener('click', () => {
             haptic(6);
             const v = Number(d.dataset.v);
-            const cur = (state.events || []).find(e => e.id === lastId);
-            const newVal = cur && cur[field] === v ? 0 : v;
+            const c = (state.events || []).find(e => e.id === lastId);
+            const newVal = c && c[field] === v ? 0 : v;
             updateEvent(lastId, { [field]: newVal });
-            row.querySelectorAll('.cap-dot').forEach(x =>
-              x.classList.toggle('cap-dot--active', newVal > 0 && Number(x.dataset.v) <= newVal));
+            mark(newVal);
             refresh(); armAutoClose();
           });
         });
       });
+    }
+
+    // Optional free-text comment on the entry.
+    function commentRow() {
+      return `<input type="text" class="cap-comment" data-comment placeholder="Commentaire (optionnel)…">`;
+    }
+    function wireComment(scope) {
+      const inp = scope.querySelector('[data-comment]');
+      if (!inp) return;
+      const cur = (state.events || []).find(e => e.id === lastId);
+      inp.value = (cur && cur.comment) || '';
+      inp.addEventListener('click', (e) => e.stopPropagation());
+      let t;
+      inp.addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(() => { updateEvent(lastId, { comment: inp.value.trim() }); refresh(); }, 500);
+        armAutoClose();
+      });
+      inp.addEventListener('blur', () => { updateEvent(lastId, { comment: inp.value.trim() }); refresh(); });
+    }
+
+    // Mark the primary control (dots or sizes) for a known value — used when
+    // re-opening an entry to edit it.
+    function markPrimary(value) {
+      const single = activeType === 'wc';
+      const cont = picker.querySelector('.cap-dots');
+      if (cont) cont.querySelectorAll('.cap-dot').forEach(x => {
+        const xv = Number(x.dataset.v);
+        x.classList.toggle('cap-dot--active', single ? xv === value : xv <= value);
+      });
+      picker.querySelectorAll('.cap-size').forEach(x => x.classList.toggle('cap-size--active', x.dataset.size === value));
+    }
+
+    // Re-open an existing event to modify its value / details / time.
+    function openForEdit(ev) {
+      activeType = ev.type; lastId = ev.id;
+      grid.querySelectorAll('.cap-btn').forEach(b => b.classList.toggle('cap-btn--active', b.dataset.cap === ev.type));
+      picker.hidden = false;
+      renderPicker();
+      if (ev.type === 'repas') { markPrimary(ev.size); afterRepas(); }
+      else {
+        const field = ev.type === 'etat' ? 'note' : ev.type === 'wc' ? 'bristol' : 'intensity';
+        const v = ev[field];
+        if (typeof v === 'number') markPrimary(v);
+        if (ev.type === 'etat') afterEtat(v);
+        else if (ev.type === 'wc') afterWc(v);
+        else afterCrise(v);
+      }
+      picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      armAutoClose();
     }
 
     grid.querySelectorAll('[data-cap]').forEach(b => {
@@ -1030,6 +1097,8 @@
         openType(b.dataset.cap);
       });
     });
+
+    return { openForEdit };
   }
 
   function escapeHtml(s) {
@@ -1038,20 +1107,26 @@
 
   // ---------- Today / day timeline ----------
   function eventSummary(ev) {
+    let main;
     if (ev.type === 'etat') {
       const bits = [`État ${ev.note}/5`];
       if (ev.douleur > 0) bits.push(`douleur ${ev.douleur}`);
       if (ev.stress > 0) bits.push(`stress ${ev.stress}`);
-      return bits.join(' · ');
-    }
-    if (ev.type === 'repas') {
+      main = bits.join(' · ');
+    } else if (ev.type === 'repas') {
       const size = MEAL_SIZES.find(m => m.id === ev.size)?.label || 'Repas';
       const tags = (ev.tags || []).length ? ' · ' + ev.tags.join(', ') : '';
-      return `${size}${tags}`;
+      main = `${size}${tags}`;
+    } else if (ev.type === 'wc') {
+      main = `Bristol ${ev.bristol} · ${BRISTOL_LABELS[ev.bristol]}`;
+    } else if (ev.type === 'crise') {
+      main = `Crise ${ev.intensity}/5${ev.loperamide ? ' · Lopéramide' : ''}`;
+    } else {
+      main = ev.type;
     }
-    if (ev.type === 'wc') return `Bristol ${ev.bristol} · ${BRISTOL_LABELS[ev.bristol]}`;
-    if (ev.type === 'crise') return `Crise ${ev.intensity}/5${ev.loperamide ? ' · Lopéramide' : ''}`;
-    return ev.type;
+    // état captured inside a non-état event
+    if (ev.type !== 'etat' && typeof ev.note === 'number' && ev.note > 0) main += ` · état ${ev.note}`;
+    return main;
   }
 
   function isBadEvent(ev) {
@@ -1059,29 +1134,47 @@
   }
 
   let undoTimer = null;
-  function renderTimeline(host, key, refresh) {
+  function renderTimeline(host, key, refresh, onEdit) {
     const evs = eventsForKey(key).slice().reverse();   // newest first
     if (evs.length === 0) {
       host.innerHTML = '<div class="timeline__empty">Aucune entrée. Tape un bouton ci-dessus.</div>';
       return;
     }
-    host.innerHTML = `<div class="timeline__list">${evs.map(ev => `
+    host.innerHTML = `<div class="timeline__list">${evs.map(ev => {
+      const comment = ev.comment ? `<span class="tl-row__note">${escapeHtml(ev.comment)}</span>` : '';
+      return `
       <div class="tl-row tl-row--${ev.type} ${isBadEvent(ev) ? 'tl-row--bad' : ''}" data-id="${ev.id}">
         <span class="tl-row__time">${fmtClock(ev.ts)}</span>
         <span class="tl-row__icon">${ICONS[EVENT_TYPES[ev.type].icon]}</span>
-        <span class="tl-row__text">${escapeHtml(eventSummary(ev))}</span>
+        <span class="tl-row__main">
+          <span class="tl-row__text">${escapeHtml(eventSummary(ev))}</span>
+          ${comment}
+        </span>
         <button class="tl-row__del" data-del="${ev.id}" type="button" aria-label="Supprimer">${ICONS.trash}</button>
-      </div>`).join('')}</div>
+      </div>`;
+    }).join('')}</div>
       <div class="tl-undo" data-undo hidden></div>`;
 
     host.querySelectorAll('[data-del]').forEach(b => {
-      b.addEventListener('click', () => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
         haptic(12);
         const removed = removeEvent(b.dataset.del);
         refresh();
         if (removed) showUndo(host, removed, refresh);
       });
     });
+
+    // Tap a row (anywhere but the trash) to re-open it for editing.
+    if (onEdit) {
+      host.querySelectorAll('.tl-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+          if (e.target.closest('[data-del]')) return;
+          const ev = (state.events || []).find(x => x.id === row.dataset.id);
+          if (ev) { haptic(6); onEdit(ev); }
+        });
+      });
+    }
   }
 
   function showUndo(host, removed, refresh) {
@@ -1352,10 +1445,10 @@
       });
       // Continuous event log
       for (const ev of eventsForKey(k)) {
-        if (ev.type === 'etat') {
-          if (typeof ev.note === 'number') { sum += ev.note; n++; }
-          if (ev.douleur > 0) { douleurSum += ev.douleur; douleurN++; }
-        } else if (ev.type === 'crise') {
+        // état rating carried by any event type
+        if (typeof ev.note === 'number' && ev.note > 0) { sum += ev.note; n++; }
+        if (ev.douleur > 0) { douleurSum += ev.douleur; douleurN++; }
+        if (ev.type === 'crise') {
           crise++; criseInt += ev.intensity || 0;
           if (ev.loperamide) cachet++;
         } else if (ev.type === 'wc' && ev.bristol > 0) {
@@ -1450,7 +1543,7 @@
         if (e && typeof e.note === 'number') pts.push({ t: SLOT_PSEUDO_H[s], note: e.note });
       });
       for (const ev of eventsForKey(day.key)) {
-        if (ev.type === 'etat' && typeof ev.note === 'number') {
+        if (typeof ev.note === 'number' && ev.note > 0) {
           pts.push({ t: new Date(ev.ts).getHours() + new Date(ev.ts).getMinutes() / 60, note: ev.note });
         }
       }
@@ -1522,18 +1615,19 @@
       });
     } else {
       // Continuous-log day → quick capture + that day's timeline.
-      const cap = document.createElement('div');
-      container.appendChild(cap);
+      const capEl = document.createElement('div');
+      container.appendChild(capEl);
       const tl = document.createElement('div');
       tl.className = 'timeline';
       container.appendChild(tl);
+      let cap;
       const refreshModal = () => {
-        renderTimeline(tl, key, refreshModal);
+        renderTimeline(tl, key, refreshModal, (ev) => cap.openForEdit(ev));
         renderHeatmap();
         renderStats();
       };
-      quickCapture(cap, key, refreshModal);
-      renderTimeline(tl, key, refreshModal);
+      cap = quickCapture(capEl, key, refreshModal);
+      renderTimeline(tl, key, refreshModal, (ev) => cap.openForEdit(ev));
     }
     document.getElementById('modalBackdrop').classList.add('modal-backdrop--open');
   }
@@ -1576,13 +1670,14 @@
       return;
     }
 
+    let cap;
     const refreshToday = () => {
-      renderTimeline(tlHost, key, refreshToday);
+      renderTimeline(tlHost, key, refreshToday, (ev) => cap.openForEdit(ev));
       renderHeatmap();
       renderStats();
     };
-    quickCapture(capHost, key, refreshToday);
-    renderTimeline(tlHost, key, refreshToday);
+    cap = quickCapture(capHost, key, refreshToday);
+    refreshToday();
   }
 
   // ---------- Init ----------

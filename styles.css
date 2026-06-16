@@ -304,6 +304,24 @@ body.theme-light .cap-tag { background: rgba(20,20,30,0.035); }
 .cap-toggle svg { width: 15px; height: 15px; }
 .cap-toggle--on { background: var(--accent-soft); border-color: var(--accent-glow); color: var(--accent); }
 
+.cap-comment {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color 140ms var(--ease);
+}
+body.theme-light .cap-comment { background: rgba(20,20,30,0.035); }
+.cap-comment:focus { border-color: var(--accent-glow); }
+.cap-comment::placeholder { color: var(--text-faint); }
+
 /* ---------- Timeline (today + day modal) ---------- */
 .timeline { margin-bottom: 40px; }
 .timeline__empty {
@@ -325,7 +343,11 @@ body.theme-light .cap-tag { background: rgba(20,20,30,0.035); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   animation: capIn 200ms var(--ease);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 140ms var(--ease);
 }
+.tl-row:active { background: var(--surface-hover); }
 .tl-row__time {
   font-size: 12px;
   font-weight: 600;
@@ -334,6 +356,7 @@ body.theme-light .cap-tag { background: rgba(20,20,30,0.035); }
 }
 .tl-row__icon { width: 18px; height: 18px; color: var(--text-dim); }
 .tl-row__icon svg { width: 100%; height: 100%; }
+.tl-row__main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .tl-row__text {
   font-size: 13px;
   font-weight: 500;
@@ -342,6 +365,14 @@ body.theme-light .cap-tag { background: rgba(20,20,30,0.035); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tl-row__note {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
 }
 .tl-row--bad .tl-row__icon { color: var(--danger); }
 .tl-row--bad .tl-row__text { color: var(--danger); }
