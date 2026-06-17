@@ -1206,7 +1206,11 @@
   }
 
   // ---------- Calendar (month view, navigable) ----------
-  let viewYear, viewMonth;   // initialised at startup to the logical today
+  // Initialised here (not just in initMonthView) so renderHeatmap is safe
+  // even if it runs before init wiring — an undefined month threw an
+  // Invalid-Date RangeError that silently killed the calendar + stats.
+  let viewYear = logicalToday().getFullYear();
+  let viewMonth = logicalToday().getMonth();
   let calView = 'month';     // 'month' | 'treatment' (legacy doctor view)
 
   function initMonthView() {
@@ -1682,9 +1686,7 @@
 
   // ---------- Init ----------
   renderHeader();
-  renderToday();
-  initMonthView();
+  initMonthView();   // wires nav + confirms viewYear/viewMonth before any render
   initRangeTabs();
-  renderHeatmap();
-  renderStats();
+  renderToday();     // renders capture + timeline + heatmap + stats
 })();
