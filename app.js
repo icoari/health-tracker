@@ -1098,7 +1098,11 @@
       });
     });
 
-    return { openForEdit };
+    return {
+      openForEdit,
+      // Open a type's picker programmatically (used by ?log= deep links).
+      openType: (t) => { if (EVENT_TYPES[t]) openType(t); },
+    };
   }
 
   function escapeHtml(s) {
@@ -1682,6 +1686,12 @@
     };
     cap = quickCapture(capHost, key, refreshToday);
     refreshToday();
+
+    // Deep link from an iOS home-screen shortcut: ?log=wc|repas|etat|crise
+    // opens straight into that picker. Fired once, after a short delay so
+    // the PWA shell is ready when launched cold.
+    const logType = new URLSearchParams(location.search).get('log');
+    if (logType) setTimeout(() => cap.openType(logType), 150);
   }
 
   // ---------- Init ----------
