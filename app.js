@@ -1279,12 +1279,33 @@
 
   let undoTimer = null;
   function renderTimeline(host, key, refresh, onEdit) {
-    const evs = eventsForKey(key).slice().reverse();   // newest first
-    if (evs.length === 0) {
+    // Merge the event log with the day's medication doses so the feed shows
+    // EVERYTHING that happened — cachets included — newest first.
+    const doseMap = dosesForKey(key);
+    const items = [
+      ...eventsForKey(key).map(ev => ({ ts: ev.ts, kind: 'event', ev })),
+      ...Object.keys(doseMap).map(slot => ({
+        ts: typeof doseMap[slot] === 'number' ? doseMap[slot] : tsForKey(key),
+        kind: 'dose', slot,
+      })),
+    ].sort((a, b) => b.ts - a.ts);
+
+    if (items.length === 0) {
       host.innerHTML = '<div class="timeline__empty">Aucune entrée. Tape un bouton ci-dessus.</div>';
       return;
     }
-    host.innerHTML = `<div class="timeline__list">${evs.map(ev => {
+
+    const rowHtml = (it) => {
+      if (it.kind === 'dose') {
+        return `
+        <div class="tl-row tl-row--dose" data-dose-slot="${it.slot}">
+          <span class="tl-row__time">${fmtClock(it.ts)}</span>
+          <span class="tl-row__icon">${ICONS.pill}</span>
+          <span class="tl-row__main"><span class="tl-row__text">Cachet ${SLOT_LABELS[it.slot] || it.slot}</span></span>
+          <button class="tl-row__del" data-dose-del="${it.slot}" type="button" aria-label="Retirer">${ICONS.trash}</button>
+        </div>`;
+      }
+      const ev = it.ev;
       const comment = ev.comment ? `<span class="tl-row__note">${escapeHtml(ev.comment)}</span>` : '';
       return `
       <div class="tl-row tl-row--${ev.type} ${isBadEvent(ev) ? 'tl-row--bad' : ''}" data-id="${ev.id}">
@@ -1296,7 +1317,9 @@
         </span>
         <button class="tl-row__del" data-del="${ev.id}" type="button" aria-label="Supprimer">${ICONS.trash}</button>
       </div>`;
-    }).join('')}</div>
+    };
+
+    host.innerHTML = `<div class="timeline__list">${items.map(rowHtml).join('')}</div>
       <div class="tl-undo" data-undo hidden></div>`;
 
     host.querySelectorAll('[data-del]').forEach(b => {
@@ -1309,9 +1332,20 @@
       });
     });
 
-    // Tap a row (anywhere but the trash) to re-open it for editing.
+    // Un-take a dose straight from the feed.
+    host.querySelectorAll('[data-dose-del]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(12);
+        setDose(key, b.dataset.doseDel, false);
+        refresh();
+      });
+    });
+
+    // Tap an event row (not the trash) to re-open it for editing. Dose rows
+    // aren't editable — they only carry data-dose-slot, not data-id.
     if (onEdit) {
-      host.querySelectorAll('.tl-row').forEach(row => {
+      host.querySelectorAll('.tl-row[data-id]').forEach(row => {
         row.addEventListener('click', (e) => {
           if (e.target.closest('[data-del]')) return;
           const ev = (state.events || []).find(x => x.id === row.dataset.id);

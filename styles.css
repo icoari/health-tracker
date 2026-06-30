@@ -376,6 +376,7 @@ body.theme-light .cap-comment { background: rgba(20,20,30,0.035); }
 }
 .tl-row--bad .tl-row__icon { color: var(--danger); }
 .tl-row--bad .tl-row__text { color: var(--danger); }
+.tl-row--dose .tl-row__icon { color: var(--accent); }
 .tl-row__del {
   width: 28px; height: 28px;
   display: inline-flex; align-items: center; justify-content: center;
