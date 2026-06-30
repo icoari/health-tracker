@@ -63,6 +63,21 @@
     crise: { label: 'Crise', icon: 'crise' },
   };
 
+  // ---------- Treatment plan (Trimébutine, cycles 30j ON / 5j OFF) ----------
+  // Prescribed 2026-06-29: 1 cp matin/midi/soir au cours des repas, par cycles
+  // de 30 jours avec 5 jours de pause entre les cycles, sur ~6 mois.
+  const TREATMENT_DEFAULTS = {
+    med: 'Trimébutine maléate',
+    rescue: 'Lopéramide',
+    startDate: '2026-07-01',
+    cycleOn: 30,
+    cycleOff: 5,
+    months: 6,
+    doses: ['matin', 'midi', 'soir'],
+    times: { matin: '08:00', midi: '12:30', soir: '19:30' },
+    reminders: true,
+  };
+
   // ---------- Haptics ----------
   function haptic(duration = 8) {
     try { if (navigator.vibrate) navigator.vibrate(duration); } catch {}
@@ -72,14 +87,20 @@
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { version: 2, startDate: START_DATE, entries: {}, events: [] };
+      if (!raw) return freshState();
       const parsed = JSON.parse(raw);
       if (!parsed.entries) parsed.entries = {};
       if (!Array.isArray(parsed.events)) parsed.events = [];   // event log (v2)
+      if (!parsed.doses || typeof parsed.doses !== 'object') parsed.doses = {};  // medication log (v3)
+      if (!parsed.treatment) parsed.treatment = { ...TREATMENT_DEFAULTS };
       return parsed;
     } catch {
-      return { version: 2, startDate: START_DATE, entries: {}, events: [] };
+      return freshState();
     }
+  }
+
+  function freshState() {
+    return { version: 3, startDate: START_DATE, entries: {}, events: [], doses: {}, treatment: { ...TREATMENT_DEFAULTS } };
   }
 
   function uid() {
@@ -289,19 +310,112 @@
     saveState(state);
   }
 
+  // ---------- Treatment / medication helpers ----------
+  function getTreatment() {
+    const t = state.treatment || {};
+    return {
+      ...TREATMENT_DEFAULTS,
+      ...t,
+      times: { ...TREATMENT_DEFAULTS.times, ...(t.times || {}) },
+      doses: Array.isArray(t.doses) && t.doses.length ? t.doses : TREATMENT_DEFAULTS.doses,
+    };
+  }
+
+  // Phase of a day relative to the cycle: 'before' | 'on' | 'off' | 'done'.
+  function cycleInfo(key) {
+    const t = getTreatment();
+    const diff = Math.floor((parseKey(key) - parseKey(t.startDate)) / 86400000);
+    if (diff < 0) return { phase: 'before', cycle: 0, day: 0, total: t.cycleOn };
+    const len = t.cycleOn + t.cycleOff;
+    const cycle = Math.floor(diff / len) + 1;
+    if (cycle > t.months) return { phase: 'done', cycle, day: 0, total: 0 };
+    const inCycle = diff % len;
+    if (inCycle < t.cycleOn) return { phase: 'on', cycle, day: inCycle + 1, total: t.cycleOn };
+    return { phase: 'off', cycle, day: inCycle - t.cycleOn + 1, total: t.cycleOff };
+  }
+
+  function isOnDay(key) { return cycleInfo(key).phase === 'on'; }
+
+  function dosesForKey(key) { return state.doses[key] || {}; }
+  function takenSlots(key) { return Object.keys(dosesForKey(key)); }
+
+  function setDose(key, slot, on) {
+    if (!state.doses[key]) state.doses[key] = {};
+    if (on) state.doses[key][slot] = Date.now();
+    else delete state.doses[key][slot];
+    if (Object.keys(state.doses[key]).length === 0) delete state.doses[key];
+    saveState(state);
+    medPing(key);
+  }
+
+  // Observance over [from,to]: taken doses / expected doses on ON-days only.
+  function adherence(fromKey, toKey) {
+    const t = getTreatment();
+    const todayK = dateKey(logicalToday());
+    let cursor = parseKey(fromKey);
+    const end = parseKey(toKey);
+    let taken = 0, expected = 0;
+    while (cursor <= end) {
+      const k = dateKey(cursor);
+      if (k <= todayK && cycleInfo(k).phase === 'on') {
+        expected += t.doses.length;
+        taken += Math.min(takenSlots(k).length, t.doses.length);
+      }
+      cursor = addDays(cursor, 1);
+    }
+    return { taken, expected, pct: expected ? Math.round(taken / expected * 100) : null };
+  }
+
+  function authToken() {
+    try {
+      const raw = localStorage.getItem('bob-sync-v1');
+      return raw ? (JSON.parse(raw).authToken || null) : null;
+    } catch { return null; }
+  }
+
+  // Tell the Worker which doses are already taken today (suppresses the
+  // reminder for a dose once it's logged). Best-effort.
+  function medPing(key) {
+    const token = authToken();
+    if (!token) return;
+    fetch('https://bob.jz7w76ry59.workers.dev/health/med', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ date: key, taken: takenSlots(key) }),
+    }).catch(() => {});
+  }
+
+  // Push the treatment schedule so the reminder cron knows the times, the
+  // cycle, and whether reminders are on. Best-effort, fired on init + edits.
+  function pushTreatmentConfig() {
+    const token = authToken();
+    if (!token) return;
+    const t = getTreatment();
+    fetch('https://bob.jz7w76ry59.workers.dev/health/treatment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        startDate: t.startDate, cycleOn: t.cycleOn, cycleOff: t.cycleOff,
+        months: t.months, doses: t.doses, times: t.times, enabled: !!t.reminders,
+      }),
+    }).catch(() => {});
+  }
+
   // ---------- Rendering ----------
   function renderHeader() {
     const today = logicalToday();
     const key = dateKey(today);
     document.getElementById('dateLabel').textContent = formatDateLong(today);
-    const n = dayNumber(key);
+    const info = cycleInfo(key);
     let label;
-    if (n < 1) {
-      label = `Suivi commence le ${formatDateLong(parseKey(START_DATE))}`;
-    } else if (n <= TOTAL_DAYS) {
-      label = `Traitement · jour ${n} / ${TOTAL_DAYS}`;
+    if (info.phase === 'before') {
+      label = `Traitement dès le ${formatDateLong(parseKey(getTreatment().startDate))}`;
+    } else if (info.phase === 'on') {
+      label = `Cycle ${info.cycle} · jour ${info.day} / ${info.total}`;
+    } else if (info.phase === 'off') {
+      label = `Pause · jour ${info.day} / ${info.total}`;
     } else {
-      label = `Suivi continu · J+${n - TOTAL_DAYS} après traitement`;
+      label = 'Traitement terminé';
     }
     document.getElementById('progressLabel').textContent = label;
   }
@@ -1340,6 +1454,19 @@
       if (isToday) cell.classList.add('day--today');
       if (isFuture || beforeStart) cell.classList.add('day--future');
       if (isTreatmentDay(key)) cell.classList.add('day--treatment');
+
+      // Medication overlay (new 6-month plan, cycles 30j/5j).
+      const ci = cycleInfo(key);
+      let dosesTaken = 0, dosesNeed = 0;
+      if (ci.phase === 'off') {
+        cell.classList.add('day--pause');
+      } else if (ci.phase === 'on') {
+        dosesNeed = getTreatment().doses.length;
+        dosesTaken = Math.min(takenSlots(key).length, dosesNeed);
+        if (dosesTaken >= dosesNeed) cell.classList.add('day--dose-full');
+        else if (!isFuture && key < todayKey) cell.classList.add('day--dose-missed');
+        else if (dosesTaken > 0) cell.classList.add('day--dose-partial');
+      }
       cell.style.animationDelay = `${i * 10}ms`;
       cell.dataset.date = key;
 
@@ -1358,6 +1485,8 @@
 
       // Tooltip
       const tip = [formatDateLong(d)];
+      if (ci.phase === 'on') tip.push(`prises ${dosesTaken}/${dosesNeed}`);
+      else if (ci.phase === 'off') tip.push('pause traitement');
       if (data.avg != null) tip.push(`état moyen ${data.avg.toFixed(1)}/5`);
       if (data.hasCrise) tip.push('crise');
       if (data.count) tip.push(`${data.count} entrée${data.count > 1 ? 's' : ''}`);
@@ -1430,6 +1559,7 @@
     if (!container) return;
 
     const { from, to } = statsDateRange();
+    const adh = adherence(from, to);
     const series = [];
     let cursor = parseKey(from);
     const end = parseKey(to);
@@ -1599,6 +1729,7 @@
       ` : ''}
       <div class="stats-card__secondary">
         <span class="stats-card__sec-item">Suivi<strong>${streak} j</strong></span>
+        ${adh.pct != null ? `<span class="stats-card__sec-item">Observance<strong>${adh.pct}% · ${adh.taken}/${adh.expected}</strong></span>` : ''}
         <span class="stats-card__sec-item">Crises<strong>${totalCrise}${totalCrise > 0 ? ` · ${(totalCriseIntensity / totalCrise).toFixed(1)}/5` : ''}</strong></span>
         ${totalDouleurN > 0 ? `<span class="stats-card__sec-item">Douleur<strong>${(totalDouleurSum / totalDouleurN).toFixed(1)}/5</strong></span>` : ''}
         ${(totalTransitNormal + totalTransitAbnormal) > 0 ? `<span class="stats-card__sec-item">Transit normal<strong>${Math.round(totalTransitNormal / (totalTransitNormal + totalTransitAbnormal) * 100)}%</strong></span>` : ''}
@@ -1622,7 +1753,9 @@
         container.appendChild(buildSlotCard(key, slot, { highlightCurrent: false, expandIfEmpty: true }));
       });
     } else {
-      // Continuous-log day → quick capture + that day's timeline.
+      // Continuous-log day → medication card + quick capture + timeline.
+      const medEl = document.createElement('div');
+      container.appendChild(medEl);
       const capEl = document.createElement('div');
       container.appendChild(capEl);
       const tl = document.createElement('div');
@@ -1630,12 +1763,13 @@
       container.appendChild(tl);
       let cap;
       const refreshModal = () => {
+        renderMedCard(medEl, key, refreshModal);
         renderTimeline(tl, key, refreshModal, (ev) => cap.openForEdit(ev));
         renderHeatmap();
         renderStats();
       };
       cap = quickCapture(capEl, key, refreshModal);
-      renderTimeline(tl, key, refreshModal, (ev) => cap.openForEdit(ev));
+      refreshModal();
     }
     document.getElementById('modalBackdrop').classList.add('modal-backdrop--open');
   }
@@ -1665,21 +1799,114 @@
   // ---------- Modal: open all empty slots expanded by default ----------
   // (override default behavior — see openModalFor)
 
+  // ---------- Medication card (the daily ritual) ----------
+  function renderMedCard(host, key, refresh) {
+    if (!host) return;
+    const t = getTreatment();
+    const info = cycleInfo(key);
+    host.classList.add('med-card');
+
+    // Status line
+    let status, sub;
+    if (info.phase === 'before') {
+      status = 'Traitement à venir';
+      sub = `Commence le ${formatDateLong(parseKey(t.startDate))}`;
+    } else if (info.phase === 'done') {
+      status = 'Traitement terminé';
+      sub = `${t.months} cycles accomplis — bravo`;
+    } else if (info.phase === 'off') {
+      status = `Pause · jour ${info.day} / ${info.total}`;
+      sub = 'Aucune prise pendant la pause de 5 jours';
+    } else {
+      status = `Cycle ${info.cycle} · jour ${info.day} / ${info.total}`;
+      const taken = takenSlots(key).length;
+      sub = `${t.med} · ${taken} / ${t.doses.length} prise${t.doses.length > 1 ? 's' : ''} aujourd'hui`;
+    }
+
+    // Dose buttons only on ON-days.
+    let dosesHtml = '';
+    if (info.phase === 'on') {
+      const taken = dosesForKey(key);
+      dosesHtml = `<div class="med-doses">${t.doses.map(slot => {
+        const on = !!taken[slot];
+        const tm = on ? fmtClock(taken[slot]) : (t.times[slot] || '');
+        return `<button type="button" class="med-dose ${on ? 'med-dose--taken' : ''}" data-dose="${slot}">
+          <span class="med-dose__icon">${ICONS[slot] || ICONS.pill}</span>
+          <span class="med-dose__label">${SLOT_LABELS[slot] || slot}</span>
+          <span class="med-dose__state">${on ? '✓ ' + tm : tm}</span>
+        </button>`;
+      }).join('')}</div>`;
+    } else if (info.phase === 'off') {
+      dosesHtml = `<div class="med-pause">${ICONS.pill}<span>Reprise le ${formatDateLong(addDays(parseKey(key), info.total - info.day + 1))}</span></div>`;
+    }
+
+    host.innerHTML = `
+      <div class="med-card__head">
+        <div class="med-card__status">
+          <span class="med-card__title">${status}</span>
+          <span class="med-card__sub">${escapeHtml(sub)}</span>
+        </div>
+        <button type="button" class="med-card__gear" data-med-settings aria-label="Réglages traitement">${ICONS.notes}</button>
+      </div>
+      ${dosesHtml}
+      <div class="med-settings" data-med-panel hidden>
+        <div class="med-settings__row">
+          <label class="med-settings__toggle"><input type="checkbox" data-rem ${t.reminders ? 'checked' : ''}> Rappels push aux heures de repas</label>
+        </div>
+        <div class="med-settings__times">
+          ${t.doses.map(slot => `<label class="med-settings__time"><span>${SLOT_LABELS[slot] || slot}</span><input type="time" data-time-slot="${slot}" value="${t.times[slot] || ''}"></label>`).join('')}
+        </div>
+        <div class="med-settings__hint">Les rappels sautent les jours de pause et les prises déjà faites.</div>
+      </div>
+    `;
+
+    // Dose toggles
+    host.querySelectorAll('[data-dose]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic(12);
+        const slot = btn.dataset.dose;
+        const on = !dosesForKey(key)[slot];
+        setDose(key, slot, on);
+        refresh();
+      });
+    });
+
+    // Settings panel
+    const gear = host.querySelector('[data-med-settings]');
+    const panel = host.querySelector('[data-med-panel]');
+    gear?.addEventListener('click', (e) => { e.stopPropagation(); haptic(4); panel.hidden = !panel.hidden; });
+    panel?.addEventListener('click', (e) => e.stopPropagation());
+    host.querySelector('[data-rem]')?.addEventListener('change', (e) => {
+      if (!state.treatment) state.treatment = { ...TREATMENT_DEFAULTS };
+      state.treatment.reminders = e.target.checked;
+      saveState(state);
+      pushTreatmentConfig();
+    });
+    host.querySelectorAll('[data-time-slot]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        if (!inp.value) return;
+        if (!state.treatment) state.treatment = { ...TREATMENT_DEFAULTS };
+        if (!state.treatment.times) state.treatment.times = { ...getTreatment().times };
+        state.treatment.times[inp.dataset.timeSlot] = inp.value;
+        saveState(state);
+        pushTreatmentConfig();
+        refresh();
+      });
+    });
+  }
+
   // ---------- Today capture + timeline ----------
   function renderToday() {
     const key = dateKey(logicalToday());
+    const medHost = document.getElementById('medCard');
     const capHost = document.getElementById('capture');
     const tlHost = document.getElementById('timeline');
     if (!capHost || !tlHost) return;
 
-    if (dayNumber(key) < 1) {
-      capHost.innerHTML = '';
-      tlHost.innerHTML = `<div class="timeline__empty">Le suivi commencera le ${formatDateLong(parseKey(START_DATE))}.</div>`;
-      return;
-    }
-
     let cap;
     const refreshToday = () => {
+      renderMedCard(medHost, key, refreshToday);
       renderTimeline(tlHost, key, refreshToday, (ev) => cap.openForEdit(ev));
       renderHeatmap();
       renderStats();
@@ -1687,10 +1914,21 @@
     cap = quickCapture(capHost, key, refreshToday);
     refreshToday();
 
-    // Deep link from an iOS home-screen shortcut: ?log=wc|repas|etat|crise
-    // opens straight into that picker. Fired once, after a short delay so
-    // the PWA shell is ready when launched cold.
-    const logType = new URLSearchParams(location.search).get('log');
+    // Deep links from notifications / home-screen shortcuts:
+    //   ?dose=matin|midi|soir     → mark that dose taken (med reminder « Pris »)
+    //   ?log=wc|repas|etat|crise  → open that capture picker
+    const params = new URLSearchParams(location.search);
+    const dose = params.get('dose');
+    if (dose && getTreatment().doses.includes(dose) && isOnDay(key)) {
+      if (!dosesForKey(key)[dose]) setDose(key, dose, true);
+      refreshToday();
+      if (medHost) {
+        medHost.classList.add('med-card--flash');
+        setTimeout(() => medHost.classList.remove('med-card--flash'), 1600);
+        medHost.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+    const logType = params.get('log');
     if (logType) setTimeout(() => cap.openType(logType), 150);
   }
 
@@ -1698,5 +1936,6 @@
   renderHeader();
   initMonthView();   // wires nav + confirms viewYear/viewMonth before any render
   initRangeTabs();
-  renderToday();     // renders capture + timeline + heatmap + stats
+  renderToday();     // renders med card + capture + timeline + heatmap + stats
+  pushTreatmentConfig();   // keep the Worker's reminder schedule in sync
 })();
