@@ -1467,16 +1467,13 @@ body.theme-light .time-input {
 .med-dose__label { font-size: 13px; font-weight: 600; color: var(--text); }
 .med-dose__state { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .med-dose--taken {
-  color: #fff;
-  background: var(--accent);
-  border-color: transparent;
-  box-shadow: 0 4px 14px var(--accent-glow);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
+.med-dose--taken .med-dose__icon,
 .med-dose--taken .med-dose__label,
-.med-dose--taken .med-dose__state { color: #fff; }
-body.theme-light .med-dose--taken,
-body.theme-light .med-dose--taken .med-dose__label,
-body.theme-light .med-dose--taken .med-dose__state { color: #fff; }
+.med-dose--taken .med-dose__state { color: var(--accent); }
 
 .med-pause {
   display: flex;
@@ -1562,21 +1559,21 @@ body.theme-light .med-settings__time input { color-scheme: light; }
   font-family: inherit;
   font-size: 14.5px;
   font-weight: 600;
-  color: #fff;
-  background: var(--accent);
-  border: none;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 4px 16px var(--accent-glow);
   transition: transform 140ms var(--ease), background 160ms var(--ease);
 }
 .voice-btn:active { transform: scale(0.98); }
 .voice-btn__icon { display: inline-flex; }
 .voice-btn__icon svg { width: 20px; height: 20px; }
 .voice-btn--rec {
-  background: var(--danger);
-  box-shadow: 0 0 0 4px var(--danger-soft);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
 }
 .voice-btn--rec .voice-btn__icon { animation: voicePulse 1.1s ease-in-out infinite; }
 @keyframes voicePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }

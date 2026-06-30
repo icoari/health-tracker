@@ -1,4 +1,4 @@
-const CACHE = 'health-tracker-v26';
+const CACHE = 'health-tracker-v27';
 const ASSETS = [
   './',
   './index.html',
