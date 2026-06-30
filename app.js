@@ -52,7 +52,10 @@
     wc:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C9 7 5.5 10.5 5.5 14a6.5 6.5 0 0 0 13 0c0-3.5-3.5-7-6.5-11.5z"/></svg>',
     plus:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+    mic:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>',
   };
+
+  const WORKER_BASE = 'https://bob.jz7w76ry59.workers.dev';
 
   // ---------- Event types (post-treatment continuous log) ----------
   // The day's calendar colour comes from « état » events (note 1-5).
@@ -1896,6 +1899,226 @@
     });
   }
 
+  // ========================================================================
+  // Voice logging — speak your day, an LLM turns it into structured events.
+  //   record → Whisper (/transcribe) → LLM (/llm) → preview → commit.
+  // Config (LLM endpoint/key) is read from Bob's settings (same origin).
+  // ========================================================================
+  const SYSTEM_PARSE = `Tu convertis une phrase dictée par Nicolas (suivi de santé digestive, en français) en événements structurés.
+
+Types possibles :
+- "etat" : état général. note 1-5 (1=très mauvais, 3=moyen, 5=très bien). Optionnel : douleur 1-5, stress 1-5.
+- "repas" : un repas. size "leger"|"normal"|"copieux". Optionnel : tags (sous-ensemble exact de : Amandes, Gras, Épicé, Lactose, Café, Alcool, Sucré, Cru, Resto).
+- "wc" : passage aux toilettes. bristol 1-7 (1-2 dur, 3-4 normal, 5 mou, 6 bouillie, 7 liquide).
+- "crise" : crise/poussée douloureuse. intensity 1-5. loperamide:true si un Lopéramide a été pris.
+
+Règles :
+- Déduis les valeurs du langage : "je vais bien"→etat note 4-5 ; "grosse crise"→intensity 4-5 ; "c'était liquide"→bristol 7 ; "repas copieux"→size copieux.
+- Une phrase peut donner plusieurs événements.
+- "comment" : la partie pertinente de la phrase (aliments précis, contexte) qui n'entre pas dans les champs.
+- Si un repas cite un aliment listé dans les tags, ajoute le tag ; sinon garde le détail dans comment.
+- N'invente rien : si une info n'est pas dite, omets le champ.
+- Réponds UNIQUEMENT en JSON valide, sans texte ni Markdown autour :
+{"events":[{"type":"etat","note":4,"comment":"..."}]}`;
+
+  function getLlmConfig() {
+    try {
+      const st = JSON.parse(localStorage.getItem('cockpit-v3') || 'null');
+      return st?.settings?.llm || null;
+    } catch { return null; }
+  }
+
+  function pickMime() {
+    const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg'];
+    for (const m of cands) { try { if (MediaRecorder.isTypeSupported(m)) return m; } catch {} }
+    return '';
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => { const s = fr.result || ''; const c = s.indexOf(','); res(c >= 0 ? s.slice(c + 1) : s); };
+      fr.onerror = rej;
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function transcribeAudio(blob) {
+    const token = authToken();
+    if (!token) throw new Error('Sauvegarde cloud requise');
+    const audio = await blobToBase64(blob);
+    const r = await fetch(`${WORKER_BASE}/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ audio, language: 'fr' }),
+    });
+    if (!r.ok) throw new Error('transcription HTTP ' + r.status);
+    return ((await r.json()).text || '').trim();
+  }
+
+  async function parseHealthText(transcript) {
+    const cfg = getLlmConfig();
+    const token = authToken();
+    if (!token) throw new Error('Sauvegarde cloud requise');
+    if (!cfg || !cfg.endpoint || !cfg.apiKey) throw new Error('Assistant non configuré (Réglages de Bob)');
+    const format = cfg.format || 'openai';
+    const body = format === 'anthropic'
+      ? { model: cfg.model || 'claude-sonnet-4-5', max_tokens: 800, temperature: 0, system: SYSTEM_PARSE, messages: [{ role: 'user', content: transcript }] }
+      : { model: cfg.model, temperature: 0, max_tokens: 800, messages: [{ role: 'system', content: SYSTEM_PARSE }, { role: 'user', content: transcript }] };
+    const r = await fetch(`${WORKER_BASE}/llm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+        'X-LLM-Endpoint': cfg.endpoint,
+        'X-LLM-Key': cfg.apiKey,
+        'X-LLM-Auth-Style': cfg.authStyle || 'bearer',
+        'X-LLM-Format': format,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error('IA HTTP ' + r.status);
+    const data = await r.json();
+    const text = format === 'anthropic'
+      ? (Array.isArray(data.content) ? data.content : []).filter(b => b.type === 'text').map(b => b.text).join('')
+      : (data.choices?.[0]?.message?.content || '');
+    return extractEvents(text);
+  }
+
+  function extractEvents(text) {
+    let raw = (text || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    // Be lenient: grab the first {...} block if the model added prose.
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) raw = m[0];
+    let obj;
+    try { obj = JSON.parse(raw); } catch { throw new Error('réponse IA illisible'); }
+    const list = Array.isArray(obj) ? obj : (Array.isArray(obj.events) ? obj.events : []);
+    return list.map(sanitizeEvent).filter(Boolean);
+  }
+
+  function sanitizeEvent(e) {
+    if (!e || !EVENT_TYPES[e.type]) return null;
+    const clamp = (v, a, b) => (typeof v === 'number' && isFinite(v)) ? Math.min(b, Math.max(a, Math.round(v))) : undefined;
+    const out = { type: e.type };
+    if (typeof e.comment === 'string' && e.comment.trim()) out.comment = e.comment.trim().slice(0, 300);
+    const note = clamp(e.note, 1, 5);
+    if (note) out.note = note;
+    if (e.type === 'etat') {
+      if (!out.note) out.note = 3;
+      const d = clamp(e.douleur, 1, 5); if (d) out.douleur = d;
+      const s = clamp(e.stress, 1, 5); if (s) out.stress = s;
+    } else if (e.type === 'repas') {
+      const sizes = MEAL_SIZES.map(m => m.id);
+      out.size = sizes.includes(e.size) ? e.size : 'normal';
+      out.tags = Array.isArray(e.tags) ? e.tags.filter(t => MEAL_TAGS.includes(t)) : [];
+    } else if (e.type === 'wc') {
+      const b = clamp(e.bristol, 1, 7);
+      if (!b) return null;
+      out.bristol = b;
+    } else if (e.type === 'crise') {
+      out.intensity = clamp(e.intensity, 1, 5) || 3;
+      if (e.loperamide === true) out.loperamide = true;
+    }
+    return out;
+  }
+
+  function voicePreviewText(e) {
+    let s = eventSummary(e);
+    if (e.comment) s += ` · « ${e.comment} »`;
+    return s;
+  }
+
+  function renderVoiceBar(host, key, refresh) {
+    if (!host) return;
+    host.classList.add('voicebar');
+    let mediaRec = null, chunks = [], micStream = null;
+    let stage = 'idle';          // idle | recording | working | preview | error
+    let parsed = [], transcript = '', msg = '';
+
+    async function beginRecord() {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = pickMime();
+      mediaRec = mime ? new MediaRecorder(micStream, { mimeType: mime }) : new MediaRecorder(micStream);
+      chunks = [];
+      mediaRec.addEventListener('dataavailable', (e) => { if (e.data && e.data.size) chunks.push(e.data); });
+      mediaRec.start();
+    }
+    function endRecord() {
+      return new Promise((res) => {
+        mediaRec.addEventListener('stop', () => {
+          try { micStream.getTracks().forEach(t => t.stop()); } catch {}
+          res(new Blob(chunks, { type: mediaRec.mimeType || 'audio/webm' }));
+        }, { once: true });
+        try { mediaRec.stop(); } catch { res(new Blob()); }
+      });
+    }
+    const fail = (m) => { stage = 'error'; msg = m; draw(); };
+
+    async function start() {
+      if (!('mediaDevices' in navigator) || !window.MediaRecorder) { fail('Micro non disponible sur cet appareil'); return; }
+      try { await beginRecord(); stage = 'recording'; draw(); }
+      catch (e) { fail('Micro refusé : ' + (e.message || e)); }
+    }
+
+    async function stopAndProcess() {
+      stage = 'working'; msg = 'Transcription…'; draw();
+      let blob;
+      try { blob = await endRecord(); } catch { return fail('Enregistrement échoué'); }
+      if (!blob.size) return fail('Aucun son capté');
+      try { transcript = await transcribeAudio(blob); } catch (e) { return fail('Transcription : ' + (e.message || e)); }
+      if (!transcript) return fail('Rien entendu');
+      stage = 'working'; msg = 'Analyse…'; draw();
+      try { parsed = await parseHealthText(transcript); } catch (e) { return fail('Analyse : ' + (e.message || e)); }
+      stage = 'preview'; draw();
+    }
+
+    function commit() {
+      for (const e of parsed) { const data = { ...e }; delete data.type; addEvent(e.type, data, key); }
+      haptic(16);
+      stage = 'idle'; parsed = []; transcript = '';
+      draw();
+      refresh();
+    }
+
+    function draw() {
+      if (stage === 'idle') {
+        host.innerHTML = `<button class="voice-btn" data-act="start" type="button"><span class="voice-btn__icon">${ICONS.mic}</span><span>Décris ta journée à voix haute</span></button>`;
+      } else if (stage === 'recording') {
+        host.innerHTML = `<button class="voice-btn voice-btn--rec" data-act="stop" type="button"><span class="voice-btn__icon">${ICONS.mic}</span><span>Enregistrement… tape pour arrêter</span></button>`;
+      } else if (stage === 'working') {
+        host.innerHTML = `<div class="voice-working"><span class="voice-spin"></span>${escapeHtml(msg)}</div>`;
+      } else if (stage === 'error') {
+        host.innerHTML = `<div class="voice-error">${escapeHtml(msg)}</div><button class="voice-btn" data-act="start" type="button"><span class="voice-btn__icon">${ICONS.mic}</span><span>Réessayer</span></button>`;
+      } else if (stage === 'preview') {
+        const chips = parsed.map((e, i) =>
+          `<div class="voice-ev"><span class="voice-ev__icon">${ICONS[EVENT_TYPES[e.type].icon]}</span><span class="voice-ev__txt">${escapeHtml(voicePreviewText(e))}</span><button class="voice-ev__rm" data-rm="${i}" type="button" aria-label="Retirer">${ICONS.close}</button></div>`
+        ).join('');
+        host.innerHTML = `
+          <div class="voice-preview">
+            <div class="voice-preview__transcript">« ${escapeHtml(transcript)} »</div>
+            <div class="voice-preview__list">${chips || '<div class="voice-preview__empty">Rien à enregistrer là-dedans.</div>'}</div>
+            <div class="voice-preview__actions">
+              <button class="voice-cancel" data-act="cancel" type="button">Annuler</button>
+              <button class="voice-save" data-act="save" type="button" ${parsed.length ? '' : 'disabled'}>Enregistrer${parsed.length ? ` (${parsed.length})` : ''}</button>
+            </div>
+          </div>`;
+      }
+      wire();
+    }
+
+    function wire() {
+      host.querySelector('[data-act="start"]')?.addEventListener('click', (e) => { e.stopPropagation(); haptic(8); start(); });
+      host.querySelector('[data-act="stop"]')?.addEventListener('click', (e) => { e.stopPropagation(); haptic(8); stopAndProcess(); });
+      host.querySelector('[data-act="cancel"]')?.addEventListener('click', (e) => { e.stopPropagation(); stage = 'idle'; parsed = []; transcript = ''; draw(); });
+      host.querySelector('[data-act="save"]')?.addEventListener('click', (e) => { e.stopPropagation(); commit(); });
+      host.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); parsed.splice(Number(b.dataset.rm), 1); draw();
+      }));
+    }
+
+    draw();
+  }
+
   // ---------- Today capture + timeline ----------
   function renderToday() {
     const key = dateKey(logicalToday());
@@ -1913,6 +2136,11 @@
     };
     cap = quickCapture(capHost, key, refreshToday);
     refreshToday();
+
+    // Voice logging bar — rendered once (it owns its own record/preview state,
+    // so it must survive the timeline re-renders that refreshToday triggers).
+    const voiceHost = document.getElementById('voiceBar');
+    if (voiceHost) renderVoiceBar(voiceHost, key, refreshToday);
 
     // Deep links from notifications / home-screen shortcuts:
     //   ?dose=matin|midi|soir     → mark that dose taken (med reminder « Pris »)
