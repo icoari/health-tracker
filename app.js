@@ -2003,6 +2003,23 @@ Règles :
     return '';
   }
 
+  // Shared mic stream — acquired once, reused across recordings (no re-prompt),
+  // released after idle so the mic indicator doesn't linger.
+  let sharedMic = null, micReleaseTimer = null;
+  async function acquireMicShared() {
+    if (micReleaseTimer) { clearTimeout(micReleaseTimer); micReleaseTimer = null; }
+    if (sharedMic && sharedMic.getAudioTracks().some(t => t.readyState === 'live')) return sharedMic;
+    sharedMic = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return sharedMic;
+  }
+  function scheduleMicReleaseShared() {
+    if (micReleaseTimer) clearTimeout(micReleaseTimer);
+    micReleaseTimer = setTimeout(() => {
+      try { sharedMic?.getTracks().forEach(t => t.stop()); } catch {}
+      sharedMic = null; micReleaseTimer = null;
+    }, 90000);
+  }
+
   function blobToBase64(blob) {
     return new Promise((res, rej) => {
       const fr = new FileReader();
@@ -2121,7 +2138,7 @@ Règles :
     let parsed = [], transcript = '', msg = '';
 
     async function beginRecord() {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStream = await acquireMicShared();
       const mime = pickMime();
       mediaRec = mime ? new MediaRecorder(micStream, { mimeType: mime }) : new MediaRecorder(micStream);
       chunks = [];
@@ -2131,7 +2148,8 @@ Règles :
     function endRecord() {
       return new Promise((res) => {
         mediaRec.addEventListener('stop', () => {
-          try { micStream.getTracks().forEach(t => t.stop()); } catch {}
+          // Keep the shared stream alive (released on idle) — no re-prompt.
+          scheduleMicReleaseShared();
           res(new Blob(chunks, { type: mediaRec.mimeType || 'audio/webm' }));
         }, { once: true });
         try { mediaRec.stop(); } catch { res(new Blob()); }
