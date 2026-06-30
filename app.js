@@ -369,6 +369,29 @@
     return { taken, expected, pct: expected ? Math.round(taken / expected * 100) : null };
   }
 
+  // A day "counts" as documented if it has any symptom entry/event OR a dose.
+  function isDocumented(key) {
+    if (state.entries[key] && Object.keys(state.entries[key]).length) return true;
+    if (eventsForKey(key).length) return true;
+    if (state.doses[key] && Object.keys(state.doses[key]).length) return true;
+    return false;
+  }
+
+  // Completeness over the treatment span so far: documented days / elapsed
+  // days, plus the current consecutive-day streak. No guilt — just visibility.
+  function completeness() {
+    const startK = getTreatment().startDate;
+    const todayK = dateKey(logicalToday());
+    if (todayK < startK) return { documented: 0, elapsed: 0, streak: 0 };
+    let cur = parseKey(startK);
+    const end = parseKey(todayK);
+    let elapsed = 0, documented = 0;
+    while (cur <= end) { if (isDocumented(dateKey(cur))) documented++; elapsed++; cur = addDays(cur, 1); }
+    let streak = 0, d = parseKey(todayK);
+    while (dateKey(d) >= startK && isDocumented(dateKey(d))) { streak++; d = addDays(d, -1); }
+    return { documented, elapsed, streak };
+  }
+
   function authToken() {
     try {
       const raw = localStorage.getItem('bob-sync-v1');
@@ -1563,6 +1586,12 @@
 
     const { from, to } = statsDateRange();
     const adh = adherence(from, to);
+    const comp = completeness();
+    const compHtml = comp.elapsed ? `
+      <div class="stats-card__complete">
+        <span class="stats-card__complete-main">${comp.documented} / ${comp.elapsed}<span class="stats-card__complete-unit"> jours documentés</span></span>
+        ${comp.streak ? `<span class="stats-card__complete-streak">série ${comp.streak} j</span>` : ''}
+      </div>` : '';
     const series = [];
     let cursor = parseKey(from);
     const end = parseKey(to);
@@ -1617,7 +1646,7 @@
     }
 
     if (totalNoteCount === 0) {
-      container.innerHTML = '<div class="stats-card__empty">Pas encore de données. Enregistre ta première entrée pour voir la tendance.</div>';
+      container.innerHTML = compHtml + '<div class="stats-card__empty">Pas encore de données. Enregistre ta première entrée pour voir la tendance.</div>';
       return;
     }
 
@@ -1709,6 +1738,7 @@
     }).join('');
 
     container.innerHTML = `
+      ${compHtml}
       <div class="stats-card__top">
         <div class="stats-card__main">
           <span class="stats-card__value">${avgNote.toFixed(1)}<span class="stats-card__value-unit">/ 5</span></span>
@@ -1911,15 +1941,20 @@ Types possibles :
 - "repas" : un repas. size "leger"|"normal"|"copieux". Optionnel : tags (sous-ensemble exact de : Amandes, Gras, Épicé, Lactose, Café, Alcool, Sucré, Cru, Resto).
 - "wc" : passage aux toilettes. bristol 1-7 (1-2 dur, 3-4 normal, 5 mou, 6 bouillie, 7 liquide).
 - "crise" : crise/poussée douloureuse. intensity 1-5. loperamide:true si un Lopéramide a été pris.
+- "dose" : prise d'un comprimé du traitement. slot "matin"|"midi"|"soir" ("j'ai pris mon cachet du midi", "j'ai bien pris mes 3 prises" → trois doses).
+
+Moment de chaque événement (ajoute si dit) :
+- "time" : heure approximative "HH:MM" sur 24h. Repères : "ce matin"≈08:00, "midi"≈12:30, "cet après-midi"≈15:00, "ce soir"≈20:00, "cette nuit"≈02:00.
+- "day" : "today" par défaut, ou "yesterday" si la personne parle d'hier.
 
 Règles :
 - Déduis les valeurs du langage : "je vais bien"→etat note 4-5 ; "grosse crise"→intensity 4-5 ; "c'était liquide"→bristol 7 ; "repas copieux"→size copieux.
-- Une phrase peut donner plusieurs événements.
+- Une phrase peut donner plusieurs événements, à des moments différents.
 - "comment" : la partie pertinente de la phrase (aliments précis, contexte) qui n'entre pas dans les champs.
 - Si un repas cite un aliment listé dans les tags, ajoute le tag ; sinon garde le détail dans comment.
 - N'invente rien : si une info n'est pas dite, omets le champ.
 - Réponds UNIQUEMENT en JSON valide, sans texte ni Markdown autour :
-{"events":[{"type":"etat","note":4,"comment":"..."}]}`;
+{"events":[{"type":"etat","note":4,"time":"08:00","comment":"..."},{"type":"dose","slot":"matin"}]}`;
 
   function getLlmConfig() {
     try {
@@ -1997,10 +2032,22 @@ Règles :
   }
 
   function sanitizeEvent(e) {
-    if (!e || !EVENT_TYPES[e.type]) return null;
+    if (!e) return null;
+    const isDose = e.type === 'dose';
+    if (!isDose && !EVENT_TYPES[e.type]) return null;
     const clamp = (v, a, b) => (typeof v === 'number' && isFinite(v)) ? Math.min(b, Math.max(a, Math.round(v))) : undefined;
     const out = { type: e.type };
     if (typeof e.comment === 'string' && e.comment.trim()) out.comment = e.comment.trim().slice(0, 300);
+    // When it happened (optional) — drives the event timestamp / day at commit.
+    if (typeof e.time === 'string' && /^\d{1,2}:\d{2}$/.test(e.time)) out.time = e.time;
+    if (e.day === 'yesterday') out.day = 'yesterday';
+
+    if (isDose) {
+      if (!['matin', 'midi', 'soir'].includes(e.slot)) return null;
+      out.slot = e.slot;
+      delete out.comment;   // a dose has no free text
+      return out;
+    }
     const note = clamp(e.note, 1, 5);
     if (note) out.note = note;
     if (e.type === 'etat') {
@@ -2023,12 +2070,16 @@ Règles :
   }
 
   function voicePreviewText(e) {
-    let s = eventSummary(e);
+    let s = e.type === 'dose' ? `Cachet ${SLOT_LABELS[e.slot] || e.slot}` : eventSummary(e);
     if (e.comment) s += ` · « ${e.comment} »`;
+    const when = [];
+    if (e.day === 'yesterday') when.push('hier');
+    if (e.time) when.push(e.time);
+    if (when.length) s = `${when.join(' ')} — ${s}`;
     return s;
   }
 
-  function renderVoiceBar(host, key, refresh) {
+  function renderVoiceBar(host, key, refresh, opts = {}) {
     if (!host) return;
     host.classList.add('voicebar');
     let mediaRec = null, chunks = [], micStream = null;
@@ -2073,7 +2124,19 @@ Règles :
     }
 
     function commit() {
-      for (const e of parsed) { const data = { ...e }; delete data.type; addEvent(e.type, data, key); }
+      for (const e of parsed) {
+        const dayKey = e.day === 'yesterday' ? dateKey(addDays(parseKey(key), -1)) : key;
+        if (e.type === 'dose') { setDose(dayKey, e.slot, true); continue; }
+        const data = { ...e };
+        delete data.type; delete data.time; delete data.day;
+        const ev = addEvent(e.type, data, dayKey);
+        // Backdate to the spoken hour if given (else now/noon via tsForKey).
+        if (e.time && ev) {
+          const [hh, mm] = e.time.split(':').map(Number);
+          const d = parseKey(dayKey); d.setHours(hh, mm, 0, 0);
+          updateEvent(ev.id, { ts: d.getTime() });
+        }
+      }
       haptic(16);
       stage = 'idle'; parsed = []; transcript = '';
       draw();
@@ -2090,9 +2153,10 @@ Règles :
       } else if (stage === 'error') {
         host.innerHTML = `<div class="voice-error">${escapeHtml(msg)}</div><button class="voice-btn" data-act="start" type="button"><span class="voice-btn__icon">${ICONS.mic}</span><span>Réessayer</span></button>`;
       } else if (stage === 'preview') {
-        const chips = parsed.map((e, i) =>
-          `<div class="voice-ev"><span class="voice-ev__icon">${ICONS[EVENT_TYPES[e.type].icon]}</span><span class="voice-ev__txt">${escapeHtml(voicePreviewText(e))}</span><button class="voice-ev__rm" data-rm="${i}" type="button" aria-label="Retirer">${ICONS.close}</button></div>`
-        ).join('');
+        const chips = parsed.map((e, i) => {
+          const icon = e.type === 'dose' ? ICONS.pill : ICONS[EVENT_TYPES[e.type].icon];
+          return `<div class="voice-ev"><span class="voice-ev__icon">${icon}</span><span class="voice-ev__txt">${escapeHtml(voicePreviewText(e))}</span><button class="voice-ev__rm" data-rm="${i}" type="button" aria-label="Retirer">${ICONS.close}</button></div>`;
+        }).join('');
         host.innerHTML = `
           <div class="voice-preview">
             <div class="voice-preview__transcript">« ${escapeHtml(transcript)} »</div>
@@ -2117,6 +2181,13 @@ Règles :
     }
 
     draw();
+
+    // Arrived via a "Dicter" shortcut → try to start recording right away.
+    // If the browser demands an explicit in-frame gesture, fall back silently
+    // to the idle button (one extra tap), no scary error.
+    if (opts.autostart) {
+      beginRecord().then(() => { stage = 'recording'; draw(); }).catch(() => { stage = 'idle'; draw(); });
+    }
   }
 
   // ---------- Today capture + timeline ----------
@@ -2139,8 +2210,13 @@ Règles :
 
     // Voice logging bar — rendered once (it owns its own record/preview state,
     // so it must survive the timeline re-renders that refreshToday triggers).
+    // ?voice=1 (from a "Dicter" shortcut) auto-arms the recorder.
+    const voiceAuto = new URLSearchParams(location.search).get('voice') === '1';
     const voiceHost = document.getElementById('voiceBar');
-    if (voiceHost) renderVoiceBar(voiceHost, key, refreshToday);
+    if (voiceHost) {
+      renderVoiceBar(voiceHost, key, refreshToday, { autostart: voiceAuto });
+      if (voiceAuto) setTimeout(() => voiceHost.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    }
 
     // Deep links from notifications / home-screen shortcuts:
     //   ?dose=matin|midi|soir     → mark that dose taken (med reminder « Pris »)

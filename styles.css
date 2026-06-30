@@ -1664,3 +1664,35 @@ body.theme-light .med-settings__time input { color-scheme: light; }
 .voice-cancel { background: transparent; border: 1px solid var(--border-strong); color: var(--text-dim); }
 .voice-save { background: var(--accent); border: none; color: #fff; }
 .voice-save:disabled { opacity: 0.4; }
+
+/* ---------- Completeness indicator ---------- */
+.stats-card__complete {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.stats-card__complete-main {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.stats-card__complete-unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0;
+}
+.stats-card__complete-streak {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+}
