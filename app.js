@@ -212,19 +212,20 @@
     if (slot === 'soir') pingWorker(key);
   }
 
-  // Tell the Bob Worker that something was logged today so the evening cron
-  // reminder skips today. Best-effort, silent on offline / no sync.
+  // Tell the Bob Worker that the EVENING was logged so the 23h reminder skips
+  // today. Only fired for evening-time activity — a 9 a.m. entry silencing
+  // the evening reminder was exactly the bug the slot gating exists to avoid.
   function pingWorker(date) {
-    try {
-      const raw = localStorage.getItem('bob-sync-v1');
-      const sync = raw ? JSON.parse(raw) : null;
-      if (!sync?.authToken) return;
-      fetch('https://bob.jz7w76ry59.workers.dev/health/ping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sync.authToken },
-        body: JSON.stringify({ date, slot: 'soir' }),
-      }).catch(() => {});
-    } catch {}
+    const h = new Date().getHours();
+    if (h < 18 && h >= 4) return;          // not evening (logical day: 18h→4h)
+    if (date !== dateKey(logicalToday())) return;   // backdated entry — not "tonight"
+    const token = authToken();
+    if (!token) return;
+    fetch(`${WORKER_BASE}/health/ping`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ date, slot: 'soir' }),
+    }).catch(() => {});
   }
 
   // ---------- Event log helpers ----------
@@ -342,9 +343,9 @@
   function dosesForKey(key) { return state.doses[key] || {}; }
   function takenSlots(key) { return Object.keys(dosesForKey(key)); }
 
-  function setDose(key, slot, on) {
+  function setDose(key, slot, on, ts) {
     if (!state.doses[key]) state.doses[key] = {};
-    if (on) state.doses[key][slot] = Date.now();
+    if (on) state.doses[key][slot] = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
     else delete state.doses[key][slot];
     if (Object.keys(state.doses[key]).length === 0) delete state.doses[key];
     saveState(state);
@@ -352,20 +353,29 @@
   }
 
   // Observance over [from,to]: taken doses / expected doses on ON-days only.
+  // For TODAY, only doses whose scheduled time has passed count as expected —
+  // otherwise the % reads 1/3 at 8 a.m. with the matin dose duly taken.
   function adherence(fromKey, toKey) {
     const t = getTreatment();
     const todayK = dateKey(logicalToday());
+    const now = new Date();
+    const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     let cursor = parseKey(fromKey);
     const end = parseKey(toKey);
     let taken = 0, expected = 0;
     while (cursor <= end) {
       const k = dateKey(cursor);
       if (k <= todayK && cycleInfo(k).phase === 'on') {
-        expected += t.doses.length;
+        const dueSlots = k === todayK
+          ? t.doses.filter(s => (t.times[s] || '00:00') <= nowHHMM)
+          : t.doses;
+        expected += dueSlots.length;
         taken += Math.min(takenSlots(k).length, t.doses.length);
       }
       cursor = addDays(cursor, 1);
     }
+    // A dose taken ahead of schedule can make taken > expected today — clamp.
+    taken = Math.min(taken, expected);
     return { taken, expected, pct: expected ? Math.round(taken / expected * 100) : null };
   }
 
@@ -387,7 +397,10 @@
     const end = parseKey(todayK);
     let elapsed = 0, documented = 0;
     while (cur <= end) { if (isDocumented(dateKey(cur))) documented++; elapsed++; cur = addDays(cur, 1); }
+    // Streak: today not yet documented shouldn't zero an unbroken run every
+    // morning — start the walk at yesterday in that case.
     let streak = 0, d = parseKey(todayK);
+    if (!isDocumented(todayK)) d = addDays(d, -1);
     while (dateKey(d) >= startK && isDocumented(dateKey(d))) { streak++; d = addDays(d, -1); }
     return { documented, elapsed, streak };
   }
@@ -936,7 +949,6 @@
   // Quick capture — one entry in a couple of taps. Tap a type, tap a value,
   // it's saved with a timestamp. Optional details amend the just-saved entry.
   // ========================================================================
-  const BRISTOL_HUE = { 1: 6, 2: 28, 3: 138, 4: 138, 5: 95, 6: 28, 7: 6 };  // 3-4 green, extremes red
 
   function quickCapture(host, key, refresh) {
     host.classList.add('capture');
@@ -996,7 +1008,12 @@
         const cur = (state.events || []).find(e => e.id === lastId);
         if (!cur || !input.value) return;
         const [hh, mm] = input.value.split(':').map(Number);
-        const d = new Date(cur.ts);
+        // Anchor on the LOGICAL day being viewed, not the event's calendar
+        // date: a post-midnight event edited to 22:30 must stay on this
+        // logical day (its calendar date is key+1), and a daytime event
+        // edited to 02:00 belongs to key+1 calendar (logical day flips at 4h).
+        const d = parseKey(key);
+        if (hh < 4) d.setDate(d.getDate() + 1);
         d.setHours(hh, mm, 0, 0);
         updateEvent(lastId, { ts: d.getTime() });
         refresh();
@@ -1246,7 +1263,8 @@
   }
 
   function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');   // values reach attribute contexts (value="…")
   }
 
   // ---------- Today / day timeline ----------
@@ -1291,7 +1309,10 @@
     ].sort((a, b) => b.ts - a.ts);
 
     if (items.length === 0) {
-      host.innerHTML = '<div class="timeline__empty">Aucune entrée. Tape un bouton ci-dessus.</div>';
+      // Keep the undo bar in the empty state too — deleting the LAST entry of
+      // a day must still offer « Annuler ».
+      host.innerHTML = '<div class="timeline__empty">Aucune entrée. Tape un bouton ci-dessus.</div>'
+        + '<div class="tl-undo" data-undo hidden></div>';
       return;
     }
 
@@ -1523,9 +1544,11 @@
       } else if (ci.phase === 'on') {
         dosesNeed = getTreatment().doses.length;
         dosesTaken = Math.min(takenSlots(key).length, dosesNeed);
+        // Past days: 0 = missed (red), some = partial (amber), all = full.
+        // The old ordering made any past 1/3 or 2/3 day read as a full miss.
         if (dosesTaken >= dosesNeed) cell.classList.add('day--dose-full');
-        else if (!isFuture && key < todayKey) cell.classList.add('day--dose-missed');
         else if (dosesTaken > 0) cell.classList.add('day--dose-partial');
+        else if (!isFuture && key < todayKey) cell.classList.add('day--dose-missed');
       }
       cell.style.animationDelay = `${i * 10}ms`;
       cell.dataset.date = key;
@@ -1580,9 +1603,10 @@
   function initRangeTabs() {
     const el = document.getElementById('rangeTabs');
     if (!el) return;
-    // Default to the most relevant range: treatment while it's running,
-    // last-30-days afterwards.
-    if (dayNumber(dateKey(logicalToday())) > TOTAL_DAYS) statsRange = 'last30';
+    // « Traitement » = the CURRENT plan (Trimébutine cycles), not the frozen
+    // legacy May window. Default to it once the plan has started.
+    const todayK = dateKey(logicalToday());
+    if (todayK < getTreatment().startDate) statsRange = 'last30';
     const tabs = [
       { id: 'treatment', label: 'Traitement' },
       { id: 'last30', label: '30 jours' },
@@ -1605,6 +1629,10 @@
   function statsDateRange() {
     const todayK = dateKey(logicalToday());
     if (statsRange === 'treatment') {
+      // The current Trimébutine plan. Before it starts, fall back to the
+      // legacy May window so the tab never shows an empty future range.
+      const start = getTreatment().startDate;
+      if (todayK >= start) return { from: start, to: todayK };
       return { from: START_DATE, to: treatmentEndKey() < todayK ? treatmentEndKey() : todayK };
     }
     if (statsRange === 'last30') {
@@ -1748,7 +1776,11 @@
       });
       for (const ev of eventsForKey(day.key)) {
         if (typeof ev.note === 'number' && ev.note > 0) {
-          pts.push({ t: new Date(ev.ts).getHours() + new Date(ev.ts).getMinutes() / 60, note: ev.note });
+          const d = new Date(ev.ts);
+          // 0-4h events belong to the END of the logical day — order them
+          // after the evening, not before the morning.
+          const h = d.getHours() + d.getMinutes() / 60;
+          pts.push({ t: h < 4 ? h + 24 : h, note: ev.note });
         }
       }
       pts.sort((a, b) => a.t - b.t).forEach(p => slotNotes.push(p.note));
@@ -1798,6 +1830,7 @@
         <span class="stats-card__sec-item">Suivi<strong>${streak} j</strong></span>
         ${adh.pct != null ? `<span class="stats-card__sec-item">Observance<strong>${adh.pct}% · ${adh.taken}/${adh.expected}</strong></span>` : ''}
         <span class="stats-card__sec-item">Crises<strong>${totalCrise}${totalCrise > 0 ? ` · ${(totalCriseIntensity / totalCrise).toFixed(1)}/5` : ''}</strong></span>
+        ${totalCachet > 0 ? `<span class="stats-card__sec-item">Lopéramide<strong>${totalCachet}</strong></span>` : ''}
         ${totalDouleurN > 0 ? `<span class="stats-card__sec-item">Douleur<strong>${(totalDouleurSum / totalDouleurN).toFixed(1)}/5</strong></span>` : ''}
         ${(totalTransitNormal + totalTransitAbnormal) > 0 ? `<span class="stats-card__sec-item">Transit normal<strong>${Math.round(totalTransitNormal / (totalTransitNormal + totalTransitAbnormal) * 100)}%</strong></span>` : ''}
       </div>
@@ -1896,7 +1929,9 @@
       const taken = dosesForKey(key);
       dosesHtml = `<div class="med-doses">${t.doses.map(slot => {
         const on = !!taken[slot];
-        const tm = on ? fmtClock(taken[slot]) : (t.times[slot] || '');
+        // Early doses were stored as `true` (no timestamp) — fmtClock(true)
+        // would print the epoch ("01:00"). Fall back to the scheduled time.
+        const tm = (on && typeof taken[slot] === 'number') ? fmtClock(taken[slot]) : (t.times[slot] || '');
         return `<button type="button" class="med-dose ${on ? 'med-dose--taken' : ''}" data-dose="${slot}">
           <span class="med-dose__icon">${ICONS[slot] || ICONS.pill}</span>
           <span class="med-dose__label">${SLOT_LABELS[slot] || slot}</span>
@@ -1904,7 +1939,13 @@
         </button>`;
       }).join('')}</div>`;
     } else if (info.phase === 'off') {
-      dosesHtml = `<div class="med-pause">${ICONS.pill}<span>Reprise le ${formatDateLong(addDays(parseKey(key), info.total - info.day + 1))}</span></div>`;
+      // During the LAST cycle's pause there is no next cycle — don't promise
+      // a reprise that never comes.
+      const repriseDate = addDays(parseKey(key), info.total - info.day + 1);
+      const nextOn = cycleInfo(dateKey(repriseDate)).phase === 'on';
+      dosesHtml = nextOn
+        ? `<div class="med-pause">${ICONS.pill}<span>Reprise le ${formatDateLong(repriseDate)}</span></div>`
+        : `<div class="med-pause">${ICONS.pill}<span>Dernière pause — fin du traitement ensuite</span></div>`;
     }
 
     host.innerHTML = `
@@ -2086,7 +2127,11 @@ Règles :
     if (!e) return null;
     const isDose = e.type === 'dose';
     if (!isDose && !EVENT_TYPES[e.type]) return null;
-    const clamp = (v, a, b) => (typeof v === 'number' && isFinite(v)) ? Math.min(b, Math.max(a, Math.round(v))) : undefined;
+    // Below-range values (0, negatives) mean "absent/invalid" — return
+    // undefined instead of promoting them to 1 (that invented Bristol-1 or
+    // douleur-1 data the user never said).
+    const clamp = (v, a, b) => (typeof v === 'number' && isFinite(v) && Math.round(v) >= a)
+      ? Math.min(b, Math.round(v)) : undefined;
     const out = { type: e.type };
     if (typeof e.comment === 'string' && e.comment.trim()) out.comment = e.comment.trim().slice(0, 300);
     // When it happened (optional) — drives the event timestamp / day at commit.
@@ -2178,16 +2223,22 @@ Règles :
     function commit() {
       for (const e of parsed) {
         const dayKey = e.day === 'yesterday' ? dateKey(addDays(parseKey(key), -1)) : key;
-        if (e.type === 'dose') { setDose(dayKey, e.slot, true); continue; }
+        // A spoken hour maps to a timestamp on the LOGICAL day: hours before
+        // 04h belong to the next calendar date ("cette nuit vers 02h" said on
+        // logical day D happened on calendar D+1) — logicalKeyOfTs flips at 4h.
+        const tsForSpoken = (hhmm) => {
+          const [hh, mm] = hhmm.split(':').map(Number);
+          const d = parseKey(dayKey);
+          if (hh < 4) d.setDate(d.getDate() + 1);
+          d.setHours(hh, mm, 0, 0);
+          return d.getTime();
+        };
+        if (e.type === 'dose') { setDose(dayKey, e.slot, true, e.time ? tsForSpoken(e.time) : undefined); continue; }
         const data = { ...e };
         delete data.type; delete data.time; delete data.day;
         const ev = addEvent(e.type, data, dayKey);
         // Backdate to the spoken hour if given (else now/noon via tsForKey).
-        if (e.time && ev) {
-          const [hh, mm] = e.time.split(':').map(Number);
-          const d = parseKey(dayKey); d.setHours(hh, mm, 0, 0);
-          updateEvent(ev.id, { ts: d.getTime() });
-        }
+        if (e.time && ev) updateEvent(ev.id, { ts: tsForSpoken(e.time) });
       }
       haptic(16);
       stage = 'idle'; parsed = []; transcript = '';
@@ -2260,12 +2311,13 @@ Règles :
     cap = quickCapture(capHost, key, refreshToday);
     refreshToday();
 
-    // Voice logging bar — rendered once (it owns its own record/preview state,
-    // so it must survive the timeline re-renders that refreshToday triggers).
-    // ?voice=1 (from a "Dicter" shortcut) auto-arms the recorder.
+    // Voice logging bar — wired ONCE (it owns its own record/preview state):
+    // renderToday also runs on closeModal, and re-rendering the bar mid-flight
+    // would orphan a live recorder (mic stuck on) and reset the preview.
     const voiceAuto = new URLSearchParams(location.search).get('voice') === '1';
     const voiceHost = document.getElementById('voiceBar');
-    if (voiceHost) {
+    if (voiceHost && !voiceHost.dataset.wired) {
+      voiceHost.dataset.wired = '1';
       renderVoiceBar(voiceHost, key, refreshToday, { autostart: voiceAuto });
       if (voiceAuto) setTimeout(() => voiceHost.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
@@ -2273,6 +2325,9 @@ Règles :
     // Deep links from notifications / home-screen shortcuts:
     //   ?dose=matin|midi|soir     → mark that dose taken (med reminder « Pris »)
     //   ?log=wc|repas|etat|crise  → open that capture picker
+    // Consumed once, then stripped from the URL — renderToday re-runs on every
+    // closeModal, and replaying ?dose= would re-add a dose the user removed
+    // (?voice=1 would even re-arm the mic without a gesture).
     const params = new URLSearchParams(location.search);
     const dose = params.get('dose');
     if (dose && getTreatment().doses.includes(dose) && isOnDay(key)) {
@@ -2286,6 +2341,10 @@ Règles :
     }
     const logType = params.get('log');
     if (logType) setTimeout(() => cap.openType(logType), 150);
+    if (location.search) {
+      const theme = params.get('theme');
+      history.replaceState(null, '', location.pathname + (theme ? `?theme=${encodeURIComponent(theme)}` : ''));
+    }
   }
 
   // ---------- Init ----------

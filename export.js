@@ -287,29 +287,185 @@
     }
   }
 
+  // ====================================================================
+  // Continuous log (events + doses + Trimébutine cycles) — the doctor
+  // export used to cover ONLY the frozen May window; everything since
+  // (état/repas/WC/crise events, medication adherence) now exports too.
+  // ====================================================================
+  const EVENTS = Array.isArray(state.events) ? state.events.slice().sort((a, b) => a.ts - b.ts) : [];
+  const DOSES = (state.doses && typeof state.doses === 'object') ? state.doses : {};
+  const TREATMENT = Object.assign(
+    { startDate: '2026-07-01', cycleOn: 30, cycleOff: 5, months: 6, doses: ['matin', 'midi', 'soir'], med: 'Trimébutine maléate' },
+    state.treatment || {},
+  );
+  const BRISTOL = { 1: 'billes dures', 2: 'grumeleux', 3: 'fissuré', 4: 'lisse (idéal)', 5: 'morceaux mous', 6: 'bouillie', 7: 'liquide' };
+  const SIZES = { leger: 'léger', normal: 'normal', copieux: 'copieux' };
+  const TYPE_LABEL = { etat: 'État', repas: 'Repas', wc: 'WC', crise: 'Crise' };
+
+  function logicalKeyOfTs(ts) {
+    const d = new Date(ts);
+    if (d.getHours() < 4) return dateKey(addDays(d, -1));
+    return dateKey(d);
+  }
+  function fmtClock(ts) {
+    return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+  function evValue(ev) {
+    if (ev.type === 'etat') return `${ev.note ?? '—'}/5`;
+    if (ev.type === 'wc') return `Bristol ${ev.bristol ?? '—'}`;
+    if (ev.type === 'crise') return `${ev.intensity ?? '—'}/5`;
+    if (ev.type === 'repas') return SIZES[ev.size] || ev.size || '—';
+    return '—';
+  }
+  function evDetails(ev) {
+    const bits = [];
+    if (ev.type === 'wc' && ev.bristol) bits.push(BRISTOL[ev.bristol] || '');
+    if (ev.type === 'repas' && Array.isArray(ev.tags) && ev.tags.length) bits.push(ev.tags.join(', '));
+    if (typeof ev.note === 'number' && ev.type !== 'etat') bits.push(`état ${ev.note}/5`);
+    if (typeof ev.douleur === 'number' && ev.douleur > 0) bits.push(`douleur ${ev.douleur}/5`);
+    if (typeof ev.stress === 'number' && ev.stress > 0) bits.push(`stress ${ev.stress}/5`);
+    if (ev.loperamide) bits.push('Lopéramide pris');
+    if (ev.comment && ev.comment.trim()) bits.push(`« ${ev.comment.trim()} »`);
+    return bits.filter(Boolean).join(' · ');
+  }
+
+  // ---- Continuous summary cards ----
+  const evGrid = document.getElementById('evSummaryGrid');
+  if (evGrid) {
+    const evDays = new Set(EVENTS.map(e => logicalKeyOfTs(e.ts)));
+    const notes = EVENTS.map(e => e.note).filter(n => typeof n === 'number' && n > 0);
+    const crises = EVENTS.filter(e => e.type === 'crise');
+    const lop = crises.filter(e => e.loperamide).length;
+    const wc = EVENTS.filter(e => e.type === 'wc' && e.bristol);
+    const wcNormal = wc.filter(e => e.bristol >= 3 && e.bristol <= 4).length;
+    evGrid.appendChild(statCard('Jours documentés', String(evDays.size), `${EVENTS.length} événements`));
+    evGrid.appendChild(statCard('État moyen', notes.length ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(2) : '—', 'sur 5'));
+    evGrid.appendChild(statCard('Crises', String(crises.length), crises.length ? `force moy. ${(crises.reduce((a, e) => a + (e.intensity || 0), 0) / crises.length).toFixed(1)}/5 · Lopéramide ×${lop}` : 'aucun épisode'));
+    evGrid.appendChild(statCard('Transit normal', wc.length ? Math.round(wcNormal / wc.length * 100) + '%' : '—', wc.length ? `${wcNormal} / ${wc.length} passages (Bristol 3-4)` : ''));
+  }
+
+  // ---- Trimébutine cycles ----
+  const medGrid = document.getElementById('medGrid');
+  const cyclesBody = document.getElementById('cyclesBody');
+  if (medGrid && cyclesBody) {
+    const start = parseKey(TREATMENT.startDate);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const len = TREATMENT.cycleOn + TREATMENT.cycleOff;
+    const perDay = (TREATMENT.doses || []).length || 3;
+    let grandTaken = 0, grandExpected = 0;
+    for (let c = 0; c < TREATMENT.months; c++) {
+      let onPassed = 0, taken = 0;
+      for (let i = 0; i < TREATMENT.cycleOn; i++) {
+        const d = addDays(start, c * len + i);
+        if (d > today) break;
+        onPassed++;
+        const doses = DOSES[dateKey(d)] || {};
+        taken += Math.min(Object.keys(doses).length, perDay);
+      }
+      if (onPassed === 0) continue;   // cycle not started yet
+      const expected = onPassed * perDay;
+      grandTaken += taken; grandExpected += expected;
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>Cycle ${c + 1}</td>
+        <td class="num">${onPassed} / ${TREATMENT.cycleOn}</td>
+        <td class="num">${taken} / ${expected}</td>
+        <td class="num">${expected ? Math.round(taken / expected * 100) + '%' : '—'}</td>
+      `;
+      cyclesBody.appendChild(row);
+    }
+    const startedStr = fmtDate(start, { day: 'numeric', month: 'long', year: 'numeric' });
+    medGrid.appendChild(statCard(TREATMENT.med || 'Traitement', grandExpected ? Math.round(grandTaken / grandExpected * 100) + '%' : '—', `observance globale · débuté le ${startedStr}`));
+    medGrid.appendChild(statCard('Posologie', `${perDay} / jour`, `cycles ${TREATMENT.cycleOn} j + ${TREATMENT.cycleOff} j de pause`));
+    if (grandExpected === 0) {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td colspan="4" style="color:#8A8A93">Traitement pas encore commencé (${startedStr}).</td>`;
+      cyclesBody.appendChild(row);
+    }
+  }
+
+  // ---- Events journal table ----
+  const eventsBody = document.getElementById('eventsBody');
+  if (eventsBody) {
+    if (EVENTS.length === 0) {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td colspan="5" style="color:#8A8A93">Aucun événement enregistré.</td>`;
+      eventsBody.appendChild(row);
+    }
+    let lastKey = '';
+    for (const ev of EVENTS) {
+      const key = logicalKeyOfTs(ev.ts);
+      const tr = document.createElement('tr');
+      const dateCell = key !== lastKey ? fmtDate(new Date(ev.ts), { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+      lastKey = key;
+      tr.innerHTML = `
+        <td class="date">${dateCell}</td>
+        <td>${fmtClock(ev.ts)}</td>
+        <td>${TYPE_LABEL[ev.type] || ev.type}</td>
+        <td class="${ev.type === 'crise' ? 'crise' : 'note'}">${evValue(ev)}</td>
+        <td></td>
+      `;
+      tr.lastElementChild.textContent = evDetails(ev);   // free text — never innerHTML
+      eventsBody.appendChild(tr);
+    }
+  }
+
   // ---------- Buttons ----------
   document.getElementById('printBtn').addEventListener('click', () => window.print());
-  document.getElementById('csvBtn').addEventListener('click', () => {
-    const rows = [['date', 'creneau', 'note', 'cachet', 'crise', 'crise_heure', 'commentaire', 'saved_at']];
-    for (const day of days) {
-      for (const s of SLOTS) {
-        const e = day.entries[s];
-        if (!e) continue;
-        rows.push([day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, e.criseTime || '', (e.notes || '').replace(/\r?\n/g, ' '), e.savedAt || '']);
-      }
-    }
+  function downloadCsv(rows, filename) {
     const csv = rows.map(r => r.map(v => {
-      const str = String(v);
+      const str = String(v ?? '');
       return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
     }).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });   // BOM → Excel reads UTF-8
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `suivi-sante-${START_DATE}.csv`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  document.getElementById('csvBtn').addEventListener('click', () => {
+    // Full legacy fields — douleur/transit/stress/tags/repas were dropped
+    // from the old export even though the entries carry them.
+    const rows = [['date', 'creneau', 'note', 'cachet', 'crise', 'crise_heure', 'douleur', 'transit', 'stress', 'tags', 'repas', 'commentaire', 'saved_at']];
+    for (const day of days) {
+      for (const s of SLOTS) {
+        const e = day.entries[s];
+        if (!e) continue;
+        rows.push([
+          day.key, s, e.note, e.cachet ? 1 : 0, e.crise || 0, e.criseTime || '',
+          e.douleur || '', e.transit || '', e.stress || '',
+          Array.isArray(e.tags) ? e.tags.join('|') : '', e.repas || '',
+          (e.notes || '').replace(/\r?\n/g, ' '), e.savedAt || '',
+        ]);
+      }
+    }
+    downloadCsv(rows, `suivi-sante-${START_DATE}.csv`);
+  });
+
+  const csvEventsBtn = document.getElementById('csvEventsBtn');
+  if (csvEventsBtn) csvEventsBtn.addEventListener('click', () => {
+    const rows = [['date', 'heure', 'type', 'note', 'bristol', 'intensite', 'taille_repas', 'tags', 'douleur', 'stress', 'loperamide', 'commentaire']];
+    for (const ev of EVENTS) {
+      rows.push([
+        logicalKeyOfTs(ev.ts), fmtClock(ev.ts), ev.type,
+        ev.note ?? '', ev.bristol ?? '', ev.intensity ?? '',
+        ev.size || '', Array.isArray(ev.tags) ? ev.tags.join('|') : '',
+        ev.douleur ?? '', ev.stress ?? '', ev.loperamide ? 1 : 0,
+        (ev.comment || '').replace(/\r?\n/g, ' '),
+      ]);
+    }
+    // Doses as their own rows
+    for (const key of Object.keys(DOSES).sort()) {
+      for (const slot of Object.keys(DOSES[key])) {
+        const ts = DOSES[key][slot];
+        rows.push([key, typeof ts === 'number' ? fmtClock(ts) : '', 'dose_' + slot, '', '', '', '', '', '', '', '', TREATMENT.med || '']);
+      }
+    }
+    downloadCsv(rows, `suivi-sante-evenements.csv`);
   });
 })();

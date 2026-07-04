@@ -1,4 +1,4 @@
-const CACHE = 'health-tracker-v28';
+const CACHE = 'health-tracker-v29';
 const ASSETS = [
   './',
   './index.html',
@@ -8,10 +8,19 @@ const ASSETS = [
   './export.js',
   './manifest.json',
   './icons/icon.svg',
+  './icons/icon-180.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache:'reload' bypasses the HTTP cache (GitHub Pages max-age=600) so a
+  // version bump never precaches stale copies.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c => c.addAll(ASSETS.map(a => new Request(a, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
