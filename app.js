@@ -115,8 +115,15 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {
       console.error('Storage failed', e);
+      return;
     }
+    // Sauvegarde cloud satellite (app installée en solo uniquement — dans
+    // l'iframe de Bob, c'est la sync de Bob qui porte les données).
+    try { if (SYNC_STANDALONE && window.BobSync) window.BobSync.schedulePush(); } catch {}
   }
+
+  // Satellite actif seulement hors iframe.
+  const SYNC_STANDALONE = (() => { try { return window.top === window; } catch { return false; } })();
 
   // Migrate boolean crise → number, ensure notes / criseTime are strings
   function migrate(state) {
@@ -2347,10 +2354,92 @@ Règles :
     }
   }
 
+  // ---------- Sauvegarde cloud (satellite, app installée en solo) ----------
+  // Fusion à la première activation : tout ce qui a été saisi hors-sync est
+  // conservé (union des événements par id, créneaux et doses complétés — le
+  // distant gagne les conflits, comme partout ailleurs).
+  function mergeHealthStates(local, remote) {
+    if (!remote || typeof remote !== 'object') return local;
+    const out = JSON.parse(JSON.stringify(remote));
+    out.entries = out.entries || {};
+    for (const day in (local.entries || {})) {
+      out.entries[day] = out.entries[day] || {};
+      for (const slot in local.entries[day]) {
+        if (!out.entries[day][slot]) out.entries[day][slot] = local.entries[day][slot];
+      }
+    }
+    out.events = Array.isArray(out.events) ? out.events : [];
+    const seen = new Set(out.events.map(e => e.id));
+    for (const ev of (Array.isArray(local.events) ? local.events : [])) {
+      if (!seen.has(ev.id)) out.events.push(ev);
+    }
+    out.doses = out.doses || {};
+    for (const day in (local.doses || {})) {
+      out.doses[day] = out.doses[day] || {};
+      for (const slot in local.doses[day]) {
+        if (!(slot in out.doses[day])) out.doses[day][slot] = local.doses[day][slot];
+      }
+    }
+    if (!out.treatment && local.treatment) out.treatment = local.treatment;
+    return out;
+  }
+
+  function renderSyncBox() {
+    const box = document.getElementById('syncBox');
+    if (!box || !SYNC_STANDALONE || !window.BobSync) { if (box) box.hidden = true; return; }
+    if (window.BobSync.isEnabled()) {
+      box.innerHTML = '<p class="syncbox__on">Sauvegarde cloud active — synchronisée avec Bob.</p>';
+      return;
+    }
+    box.innerHTML = `
+      <div class="syncbox">
+        <p class="syncbox__txt">Synchronise cette app avec Bob (mêmes données partout) :</p>
+        <form class="syncbox__form" data-sync-form>
+          <input class="syncbox__input" type="password" placeholder="Passphrase de la sauvegarde Bob" autocomplete="current-password" data-sync-pass>
+          <button class="syncbox__btn" type="submit">Activer</button>
+        </form>
+        <p class="syncbox__status" data-sync-status></p>
+      </div>`;
+    box.querySelector('[data-sync-form]').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pass = box.querySelector('[data-sync-pass]').value;
+      const status = box.querySelector('[data-sync-status]');
+      const btn = box.querySelector('.syncbox__btn');
+      if (!pass) return;
+      btn.disabled = true;
+      status.textContent = 'Dérivation des clés… (~10 s, c\'est normal)';
+      try {
+        await window.BobSync.unlock(pass);
+        status.textContent = 'Synchronisé — rechargement…';
+        setTimeout(() => location.reload(), 600);
+      } catch (err) {
+        status.textContent = 'Échec : ' + (err.message || err);
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function initSatelliteSync() {
+    if (!SYNC_STANDALONE || !window.BobSync) return;
+    window.BobSync.configure({ section: '_healthTracker', localKey: STORAGE_KEY, merge: mergeHealthStates });
+    renderSyncBox();
+    if (!window.BobSync.isEnabled()) return;
+    // Pull au démarrage + au retour au premier plan (throttlé).
+    let lastPull = 0;
+    const pull = () => {
+      if (Date.now() - lastPull < 60000) return;
+      lastPull = Date.now();
+      window.BobSync.reconcile().then(r => { if (r && r.applied) location.reload(); }).catch(() => {});
+    };
+    pull();
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pull(); });
+  }
+
   // ---------- Init ----------
   renderHeader();
   initMonthView();   // wires nav + confirms viewYear/viewMonth before any render
   initRangeTabs();
   renderToday();     // renders med card + capture + timeline + heatmap + stats
   pushTreatmentConfig();   // keep the Worker's reminder schedule in sync
+  initSatelliteSync();
 })();

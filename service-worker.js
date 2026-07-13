@@ -1,10 +1,11 @@
-const CACHE = 'health-tracker-v32';
+const CACHE = 'health-tracker-v33';
 const ASSETS = [
   './',
   './index.html',
   './export.html',
   './styles.css',
   './app.js',
+  './bob-sync.js',
   './export.js',
   './manifest.json',
   './icons/icon.svg',

@@ -1694,3 +1694,29 @@ body.theme-light .med-settings__time input { color-scheme: light; }
   color: var(--accent);
   flex-shrink: 0;
 }
+
+/* ---------- Sauvegarde cloud (app en solo) ---------- */
+.syncbox {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.syncbox__txt { font-size: 13px; color: var(--text-dim); margin: 0 0 10px; }
+.syncbox__form { display: flex; gap: 8px; }
+.syncbox__input {
+  flex: 1; font-family: inherit; font-size: 14px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 10px 12px; outline: none;
+}
+.syncbox__input:focus { border-color: var(--accent); }
+.syncbox__btn {
+  font-family: inherit; font-size: 14px; font-weight: 600; color: var(--accent);
+  background: var(--accent-soft); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 10px 16px; cursor: pointer;
+}
+.syncbox__btn:disabled { opacity: 0.5; }
+.syncbox__status { font-size: 12px; color: var(--text-faint); margin: 8px 0 0; min-height: 14px; }
+.syncbox__on { font-size: 12px; color: var(--text-faint); margin: 0 0 12px; }
