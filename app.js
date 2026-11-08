@@ -2090,6 +2090,20 @@ Règles :
     return ((await r.json()).text || '').trim();
   }
 
+  // Claude generations from Opus 4.7 / Sonnet 5 on reject temperature (400);
+  // Sonnet 5, Opus 4.7/4.8 and Opus 5 think by default, which can eat a short
+  // max_tokens; Fable and Opus 5.5 cannot stop thinking. Same rule as Bob.
+  function fitClaudeBody(body) {
+    const id = String(body.model || '').toLowerCase();
+    if (/claude-(sonnet-5|opus-4-[78]|opus-5|fable|mythos)/.test(id)) delete body.temperature;
+    if (/claude-(sonnet-5|opus-4-[78]|opus-5(?!-5))/.test(id)) body.thinking = { type: 'disabled' };
+    if (/claude-(fable|mythos|opus-5-5)/.test(id)) {
+      body.output_config = { effort: 'low' };
+      body.max_tokens = Math.max(body.max_tokens || 0, 4096);
+    }
+    return body;
+  }
+
   async function parseHealthText(transcript) {
     const cfg = getLlmConfig();
     const token = authToken();
@@ -2097,7 +2111,7 @@ Règles :
     if (!cfg || !cfg.endpoint || !cfg.apiKey) throw new Error('Assistant non configuré (Réglages de Bob)');
     const format = cfg.format || 'openai';
     const body = format === 'anthropic'
-      ? { model: cfg.model || 'claude-sonnet-4-5', max_tokens: 800, temperature: 0, system: SYSTEM_PARSE, messages: [{ role: 'user', content: transcript }] }
+      ? fitClaudeBody({ model: cfg.model || 'claude-sonnet-5', max_tokens: 800, temperature: 0, system: SYSTEM_PARSE, messages: [{ role: 'user', content: transcript }] })
       : { model: cfg.model, temperature: 0, max_tokens: 800, messages: [{ role: 'system', content: SYSTEM_PARSE }, { role: 'user', content: transcript }] };
     const r = await fetch(`${WORKER_BASE}/llm`, {
       method: 'POST',
